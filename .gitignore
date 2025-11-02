@@ -1,0 +1,95 @@
+# Environment Variables (NEVER COMMIT CREDENTIALS)
+.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+venv/
+ENV/
+env/
+.venv
+
+# Playwright
+.playwright/
+playwright-report/
+test-results/
+
+# Logs
+logs/*.log
+logs/*.txt
+*.log
+
+# Data files (sensitive)
+data/input/*.csv
+data/output/*.csv
+data/creatives/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Screenshots (may contain sensitive info)
+screenshots/
+*.png
+*.jpg
+*.jpeg
+
+# Session data
+session/
+cookies/
+*.session
+
+# Jupyter Notebooks
+.ipynb_checkpoints
+
+# Coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+
+# Distribution / packaging
+.Python
+build/
+
+# Keep directory structure but ignore contents
+!data/input/.gitkeep
+!data/output/.gitkeep
+!data/creatives/.gitkeep
+!logs/.gitkeep
+
+# Exception: Keep example files
+!data/input/example.csv
+!Example_docs/*.csv
+

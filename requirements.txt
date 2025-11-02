@@ -1,0 +1,31 @@
+# TrafficJunky Automation Tool - Python Dependencies
+
+# Browser Automation
+playwright==1.48.0
+
+# Data Processing
+pandas==2.2.3
+numpy==1.26.4
+
+# Configuration Management
+python-dotenv==1.0.1
+
+# File Operations
+pathlib2==2.3.7.post1
+
+# Logging & Utilities
+colorama==0.4.6  # Colored terminal output
+tqdm==4.66.5     # Progress bars
+
+# Google Drive Integration (optional - for future use)
+# google-api-python-client==2.147.0
+# google-auth-httplib2==0.2.0
+# google-auth-oauthlib==1.2.1
+
+# Testing (optional but recommended)
+pytest==8.3.3
+pytest-playwright==0.5.2
+
+# Date/Time utilities
+python-dateutil==2.9.0.post0
+
