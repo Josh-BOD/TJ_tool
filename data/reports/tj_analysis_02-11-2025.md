@@ -1,54 +1,57 @@
 # Campaign Performance Report - 02-11-2025
 
 **Period:** Yesterday
-**Generated:** 2025-11-03 12:59:33 EST
+**Generated:** 2025-11-03 13:03:44 EST
 
 ## Summary 📊
 
 **Total Campaigns:** 20
-**Total Spend:** $4699.93
+**Total Spend:** $4713.26
 **Total Conversions:** 50
-**Average eCPA:** $94.00
-**Budget Utilization:** 0.1% ($4685.50 / $9004991.00)
+**Average eCPA:** $94.27
+**Budget Utilization:** 0.1% ($4701.68 / $9004991.00)
 
 ## What to do more of 🟢
+*eCPA < $50 | Conversions > 5 | Spend > $250*
 
-- [CPA - Pokemon/Digimon - Video-IS - ALL - USA](https://advertiser.trafficjunky.com/campaign/overview/1012866642) - eCPA: $39.55 | Conv: 9 | Spend: $355.98
+- [CPA - Pokemon/Digimon - Video-IS - ALL - USA](https://advertiser.trafficjunky.com/campaign/overview/1012866642) - eCPA: $39.68 | Conv: 9 | Spend: $357.16
 
 ## To Watch 🟡
+*eCPA $100-$200 | Conversions > 3 | Spend > $250 | Budget Velocity 70-90%*
 
 None
-
 
 ## Scaled 📈
+*eCPA < $60 | Budget Velocity > 95% (hitting limits)*
 
 None
 
-
 ## Killed ❌
+*eCPA > $120 + Spend > $250 + Velocity < 60% | OR Zero conversions after $250 spend*
 
-- [US_EN_NATIVE_CPM_PH_HOMEPAGE_iOS_ALL_TJ](https://advertiser.trafficjunky.com/campaign/overview/1013012981) - eCPA: $381.27 | Conv: 1 | Spend: $381.27
-- [CPA - Global - Video-IS - Desktop - OTH3](https://advertiser.trafficjunky.com/campaign/overview/1012927552) - eCPA: $0.00 | Conv: 0 | Spend: $258.01
+- [US_EN_NATIVE_CPM_PH_HOMEPAGE_iOS_ALL_TJ](https://advertiser.trafficjunky.com/campaign/overview/1013012981) - eCPA: $381.79 | Conv: 1 | Spend: $381.79
+- [CPA - Global - Video-IS - Desktop - OTH3](https://advertiser.trafficjunky.com/campaign/overview/1012927552) - eCPA: $0.00 | Conv: 0 | Spend: $258.30
 
 ## Other ⚪
+*Does not meet any category criteria*
 
-- [CPA - Global - Video-IS - excl. iOS - OTH5](https://advertiser.trafficjunky.com/campaign/overview/1012927662) - eCPA: $78.58 | Conv: 8 | Spend: $628.63
-- [US_EN_SHORTIES_CPM_PH_MOB_MF_TJ](https://advertiser.trafficjunky.com/campaign/overview/1013017191) - eCPA: $68.08 | Conv: 4 | Spend: $272.31
-- [CPA - Batch 1 - Native Homepage - excl iOS - USA](https://advertiser.trafficjunky.com/campaign/overview/1012929922) - eCPA: $50.07 | Conv: 5 | Spend: $250.34
-- [CPA - Batch 1 - Native Homepage - USA](https://advertiser.trafficjunky.com/campaign/overview/1012929942) - eCPA: $79.56 | Conv: 3 | Spend: $238.67
-- [US_EN_PREROLL_CPA_ALL_Broad_DESK_MF_JB](https://advertiser.trafficjunky.com/campaign/overview/1013013881) - eCPA: $116.42 | Conv: 2 | Spend: $232.83
-- [US_EN_PREROLL_CPA_PH-RT_KEY-Missionary_AND_M_JB](https://advertiser.trafficjunky.com/campaign/overview/1013014111) - eCPA: $112.61 | Conv: 2 | Spend: $225.21
-- [US_EN_PREROLL_CPA_ALL_KEY-Cowgirl_iOS_M_JB](https://advertiser.trafficjunky.com/campaign/overview/1013013961) - eCPA: $72.80 | Conv: 3 | Spend: $218.40
-- [US_EN_PREROLL_CPA_ALL_SOURCE-Gay_DESK_M_JB](https://advertiser.trafficjunky.com/campaign/overview/1013017371) - eCPA: $218.30 | Conv: 1 | Spend: $218.30
-- [US_EN_PREROLL_CPM_PH_KEY-Trans_iOS_M_TJ](https://advertiser.trafficjunky.com/campaign/overview/1013017321) - eCPA: $103.53 | Conv: 2 | Spend: $207.07
-- [US_EN_NATIVE_CPM_PH_ALL-MOB_HENTAI_SEGMENT_ALL_TJ](https://advertiser.trafficjunky.com/campaign/overview/1013012751) - eCPA: $97.68 | Conv: 2 | Spend: $195.36
-- [US_EN_PREROLL_CPA_ALL_KEY-Hentai-Cartoon_iOS_M_JB](https://advertiser.trafficjunky.com/campaign/overview/1013013631) - eCPA: $183.49 | Conv: 1 | Spend: $183.49
-- [US_EN_PREROLL_CPA_ALL_SOURCE-Gay_AND_MF_JB](https://advertiser.trafficjunky.com/campaign/overview/1013017301) - eCPA: $166.53 | Conv: 1 | Spend: $166.53
-- [US_EN_PREROLL_CPA_ALL_KEY-Hentai-Cartoon_AND_M_JB](https://advertiser.trafficjunky.com/campaign/overview/1013013621) - eCPA: $0.00 | Conv: 0 | Spend: $161.56
-- [CA_EN_PREROLL_CPA_ALL_KEY-Hentai-Cartoon_iOS_M_JB](https://advertiser.trafficjunky.com/campaign/overview/1013013591) - eCPA: $158.73 | Conv: 1 | Spend: $158.73
-- [CPA - Shorties - Video-IS - excl. iOS - USA](https://advertiser.trafficjunky.com/campaign/overview/1012915002) - eCPA: $42.67 | Conv: 3 | Spend: $128.01
-- [CPA - Global - Video-IS - Desktop - OTH](https://advertiser.trafficjunky.com/campaign/overview/1012924742) - eCPA: $0.00 | Conv: 0 | Spend: $117.24
-- [CPA - FinDom - Video-IS - Desktop - USA](https://advertiser.trafficjunky.com/campaign/overview/1011839172) - eCPA: $50.99 | Conv: 2 | Spend: $101.98
+- [CPA - Global - Video-IS - excl. iOS - OTH5](https://advertiser.trafficjunky.com/campaign/overview/1012927662) - eCPA: $78.79 | Conv: 8 | Spend: $630.35
+- [US_EN_SHORTIES_CPM_PH_MOB_MF_TJ](https://advertiser.trafficjunky.com/campaign/overview/1013017191) - eCPA: $68.36 | Conv: 4 | Spend: $273.44
+- [CPA - Batch 1 - Native Homepage - excl iOS - USA](https://advertiser.trafficjunky.com/campaign/overview/1012929922) - eCPA: $50.23 | Conv: 5 | Spend: $251.16
+- [CPA - Batch 1 - Native Homepage - USA](https://advertiser.trafficjunky.com/campaign/overview/1012929942) - eCPA: $79.77 | Conv: 3 | Spend: $239.32
+- [US_EN_PREROLL_CPA_ALL_Broad_DESK_MF_JB](https://advertiser.trafficjunky.com/campaign/overview/1013013881) - eCPA: $116.69 | Conv: 2 | Spend: $233.37
+- [US_EN_PREROLL_CPA_PH-RT_KEY-Missionary_AND_M_JB](https://advertiser.trafficjunky.com/campaign/overview/1013014111) - eCPA: $112.84 | Conv: 2 | Spend: $225.69
+- [US_EN_PREROLL_CPA_ALL_KEY-Cowgirl_iOS_M_JB](https://advertiser.trafficjunky.com/campaign/overview/1013013961) - eCPA: $73.03 | Conv: 3 | Spend: $219.08
+- [US_EN_PREROLL_CPA_ALL_SOURCE-Gay_DESK_M_JB](https://advertiser.trafficjunky.com/campaign/overview/1013017371) - eCPA: $218.97 | Conv: 1 | Spend: $218.97
+- [US_EN_PREROLL_CPM_PH_KEY-Trans_iOS_M_TJ](https://advertiser.trafficjunky.com/campaign/overview/1013017321) - eCPA: $103.79 | Conv: 2 | Spend: $207.58
+- [US_EN_NATIVE_CPM_PH_ALL-MOB_HENTAI_SEGMENT_ALL_TJ](https://advertiser.trafficjunky.com/campaign/overview/1013012751) - eCPA: $97.99 | Conv: 2 | Spend: $195.97
+- [US_EN_PREROLL_CPA_ALL_KEY-Hentai-Cartoon_iOS_M_JB](https://advertiser.trafficjunky.com/campaign/overview/1013013631) - eCPA: $184.08 | Conv: 1 | Spend: $184.08
+- [US_EN_PREROLL_CPA_ALL_SOURCE-Gay_AND_MF_JB](https://advertiser.trafficjunky.com/campaign/overview/1013017301) - eCPA: $167.18 | Conv: 1 | Spend: $167.18
+- [US_EN_PREROLL_CPA_ALL_KEY-Hentai-Cartoon_AND_M_JB](https://advertiser.trafficjunky.com/campaign/overview/1013013621) - eCPA: $0.00 | Conv: 0 | Spend: $162.34
+- [CA_EN_PREROLL_CPA_ALL_KEY-Hentai-Cartoon_iOS_M_JB](https://advertiser.trafficjunky.com/campaign/overview/1013013591) - eCPA: $159.34 | Conv: 1 | Spend: $159.34
+- [CPA - Shorties - Video-IS - excl. iOS - USA](https://advertiser.trafficjunky.com/campaign/overview/1012915002) - eCPA: $42.81 | Conv: 3 | Spend: $128.42
+- [CPA - Global - Video-IS - Desktop - OTH](https://advertiser.trafficjunky.com/campaign/overview/1012924742) - eCPA: $0.00 | Conv: 0 | Spend: $117.40
+- [CPA - FinDom - Video-IS - Desktop - USA](https://advertiser.trafficjunky.com/campaign/overview/1011839172) - eCPA: $51.16 | Conv: 2 | Spend: $102.32
 
 ---
 

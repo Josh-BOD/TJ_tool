@@ -22,6 +22,15 @@ class ReportGenerator:
         'uncategorized': ('Other', '⚪')
     }
     
+    # Category criteria descriptions
+    CATEGORY_CRITERIA = {
+        'what_to_do_more_of': '*eCPA < $50 | Conversions > 5 | Spend > $250*',
+        'to_watch': '*eCPA $100-$200 | Conversions > 3 | Spend > $250 | Budget Velocity 70-90%*',
+        'scaled': '*eCPA < $60 | Budget Velocity > 95% (hitting limits)*',
+        'killed': '*eCPA > $120 + Spend > $250 + Velocity < 60% | OR Zero conversions after $250 spend*',
+        'uncategorized': '*Does not meet any category criteria*'
+    }
+    
     def __init__(self, output_dir: Path = None):
         """
         Initialize report generator.
@@ -67,11 +76,18 @@ class ReportGenerator:
             return ""
         
         display_name, emoji = self.CATEGORY_DISPLAY.get(category_name, (category_name.title(), ''))
+        criteria = self.CATEGORY_CRITERIA.get(category_name, '')
         
-        lines = [f"## {display_name} {emoji}\n"]
+        lines = [f"## {display_name} {emoji}"]
+        
+        # Add criteria description
+        if criteria:
+            lines.append(criteria)
+        
+        lines.append("")  # Empty line before campaigns
         
         if not campaigns:
-            lines.append("None\n")
+            lines.append("None")
         else:
             for campaign in campaigns:
                 lines.append(f"- {self.format_campaign_line(campaign)}")
