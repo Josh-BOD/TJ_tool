@@ -78,6 +78,19 @@ DRY_RUN=True  # Keep True for testing
 
 ## 📋 Usage
 
+### Configure Your Campaigns
+
+Edit `data/input/campaign_mapping.csv` with your campaigns:
+
+```csv
+campaign_id,csv_filename,campaign_name,enabled
+1013017411,Gay.csv,US Gay Campaign,true
+1013017412,Straight.csv,US Straight Campaign,true
+1013017413,Trans.csv,US Trans Campaign,true
+```
+
+**For 400+ campaigns**: Just keep adding rows! Same CSV can be used for multiple campaigns.
+
 ### Quick Start (Dry Run)
 
 ```bash
@@ -85,17 +98,11 @@ DRY_RUN=True  # Keep True for testing
 python main.py
 ```
 
-### Upload to Specific Campaign
+### Upload to All Enabled Campaigns
 
 ```bash
 # Make sure to set DRY_RUN=False in .env first!
-python main.py --campaign 1013017411 --csv ./data/input/Gay.csv
-```
-
-### Multiple Campaigns
-
-```bash
-python main.py --campaigns 1013017411,1013017412,1013017413
+python main.py --live
 ```
 
 ### Advanced Options

@@ -21,7 +21,8 @@ class Config:
     # ====================================
     # Campaign Configuration
     # ====================================
-    CAMPAIGN_IDS: List[str] = os.getenv('CAMPAIGN_IDS', '').split(',')
+    # Campaigns are loaded from campaign_mapping.csv
+    # No need to configure campaign IDs in .env
     
     # ====================================
     # File Paths
@@ -79,9 +80,6 @@ class Config:
         if not cls.TJ_PASSWORD:
             errors.append("TJ_PASSWORD is not set in .env file")
         
-        if not cls.CAMPAIGN_IDS or cls.CAMPAIGN_IDS == ['']:
-            errors.append("CAMPAIGN_IDS is not set in .env file")
-        
         # Ensure directories exist
         for dir_path in [cls.CSV_INPUT_DIR, cls.CSV_OUTPUT_DIR, 
                         cls.LOG_DIR, cls.CREATIVE_DIR, cls.SCREENSHOT_DIR]:
@@ -107,7 +105,7 @@ class Config:
         print("="*50)
         print(f"Username: {cls.TJ_USERNAME[:3]}***" if cls.TJ_USERNAME else "Username: NOT SET")
         print(f"Password: {'*' * 8}" if cls.TJ_PASSWORD else "Password: NOT SET")
-        print(f"Campaign IDs: {', '.join(cls.CAMPAIGN_IDS)}" if cls.CAMPAIGN_IDS != [''] else "Campaign IDs: NOT SET")
+        print(f"Campaign Mapping: data/input/campaign_mapping.csv")
         print(f"Dry Run Mode: {cls.DRY_RUN}")
         print(f"Headless Mode: {cls.HEADLESS_MODE}")
         print(f"Browser: {cls.BROWSER_TYPE}")

@@ -73,8 +73,8 @@ if [ ! -f .env ]; then
 TJ_USERNAME=your_username_here
 TJ_PASSWORD=your_password_here
 
-# Campaign Configuration
-CAMPAIGN_IDS=1013017411
+# Campaigns are configured in data/input/campaign_mapping.csv
+# No need to configure campaign IDs here
 
 # File Paths
 CSV_INPUT_DIR=./data/input
