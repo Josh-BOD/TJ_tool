@@ -10,6 +10,9 @@ numpy==1.26.4
 # Configuration Management
 python-dotenv==1.0.1
 
+# HTTP Requests (for API calls)
+requests==2.32.3
+
 # File Operations
 pathlib2==2.3.7.post1
 

@@ -17,6 +17,7 @@ class Config:
     # ====================================
     TJ_USERNAME: str = os.getenv('TJ_USERNAME', '')
     TJ_PASSWORD: str = os.getenv('TJ_PASSWORD', '')
+    TJ_API_KEY: str = os.getenv('TJ_API_KEY', '')
     
     # ====================================
     # Campaign Configuration
@@ -30,6 +31,7 @@ class Config:
     BASE_DIR: Path = Path(__file__).parent.parent
     CSV_INPUT_DIR: Path = BASE_DIR / os.getenv('CSV_INPUT_DIR', './data/input')
     CSV_OUTPUT_DIR: Path = BASE_DIR / os.getenv('CSV_OUTPUT_DIR', './data/output')
+    REPORT_OUTPUT_DIR: Path = BASE_DIR / os.getenv('REPORT_OUTPUT_DIR', './data/reports')
     LOG_DIR: Path = BASE_DIR / os.getenv('LOG_DIR', './logs')
     CREATIVE_DIR: Path = BASE_DIR / os.getenv('CREATIVE_DIR', './data/creatives')
     SCREENSHOT_DIR: Path = BASE_DIR / 'screenshots'
@@ -63,6 +65,13 @@ class Config:
     TJ_BASE_URL: str = 'https://advertiser.trafficjunky.com'
     TJ_LOGIN_URL: str = 'https://www.trafficjunky.com/sign-in'
     TJ_CAMPAIGNS_URL: str = f'{TJ_BASE_URL}/campaigns'
+    TJ_API_BASE_URL: str = 'https://api.trafficjunky.com/api'
+    
+    # ====================================
+    # Reporting Settings
+    # ====================================
+    DEFAULT_TIME_PERIOD: str = os.getenv('DEFAULT_TIME_PERIOD', 'today')  # today, yesterday, last7days
+    TIMEZONE: str = 'America/New_York'  # EST - TJ reports in EST
     
     @classmethod
     def validate(cls) -> List[str]:
@@ -81,7 +90,7 @@ class Config:
             errors.append("TJ_PASSWORD is not set in .env file")
         
         # Ensure directories exist
-        for dir_path in [cls.CSV_INPUT_DIR, cls.CSV_OUTPUT_DIR, 
+        for dir_path in [cls.CSV_INPUT_DIR, cls.CSV_OUTPUT_DIR, cls.REPORT_OUTPUT_DIR,
                         cls.LOG_DIR, cls.CREATIVE_DIR, cls.SCREENSHOT_DIR]:
             dir_path.mkdir(parents=True, exist_ok=True)
         

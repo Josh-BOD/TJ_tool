@@ -297,6 +297,123 @@ After first login, the session is saved. You won't need to login again unless:
 
 ---
 
+## 📊 Campaign Performance Analysis (NEW!)
+
+Automatically analyze campaign performance and generate categorized reports for Slack Canvas.
+
+### What It Does
+
+1. **Fetches data** from TrafficJunky API
+2. **Calculates metrics** (eCPA, CVR, budget velocity)
+3. **Categorizes campaigns** automatically:
+   - 🟢 **What to do more of** - Great performance (eCPA < $50, Conv > 5)
+   - 🟡 **To Watch** - Needs tweaking (eCPA $100-$200, velocity 70-90%)
+   - 📈 **Scaled** - Hit budget limits (eCPA < $60, velocity > 95%)
+   - ❌ **Killed** - Poor performance (eCPA > $120, low velocity)
+4. **Generates markdown report** ready for Slack Canvas
+
+### Setup
+
+1. **Get API Key** from TrafficJunky:
+   - Log into dashboard
+   - Profile > API Token
+   - Generate/copy token
+
+2. **Add to `.env`**:
+   ```env
+   TJ_API_KEY=your_api_key_here
+   ```
+
+### Usage
+
+```bash
+# Analyze today's performance
+python analyze.py
+
+# Yesterday's performance
+python analyze.py --period yesterday
+
+# Last 7 days
+python analyze.py --period last7days
+
+# Test API connection
+python analyze.py --test-api
+
+# Custom output file
+python analyze.py --output my_report.md
+```
+
+### Output Format
+
+Reports saved to `data/reports/tj_analysis_DD-MM-YYYY.md`:
+
+```markdown
+# Campaign Performance Report - 03-11-2025
+
+## Summary 📊
+Total Campaigns: 45
+Total Spend: $12,543.50
+Total Conversions: 234
+Average eCPA: $53.60
+Budget Utilization: 82.3%
+
+## What to do more of 🟢
+- [Campaign_Name](URL) - eCPA: $45.32 | Conv: 12 | Spend: $543.84
+- [Campaign_Name2](URL) - eCPA: $48.50 | Conv: 15 | Spend: $727.50
+
+## To Watch 🟡
+- [Campaign_Name3](URL) - eCPA: $125.00 | Conv: 8 | Spend: $1,000.00
+
+## Scaled 📈
+- [Campaign_Name4](URL) - eCPA: $55.00 | Conv: 25 | Spend: $1,375.00
+
+## Killed ❌
+- [Campaign_Name5](URL) - eCPA: $185.00 | Conv: 3 | Spend: $555.00
+```
+
+### Features
+
+- ✅ **Fast execution** - Fetches all campaigns in < 1 minute
+- ✅ **Smart categorization** - Based on your eCPA thresholds
+- ✅ **Budget velocity tracking** - See which campaigns hit limits
+- ✅ **Slack-ready** - Copy/paste to Slack Canvas
+- ✅ **Timezone aware** - Uses EST (TrafficJunky's timezone)
+
+### Options
+
+```bash
+--period              # today, yesterday, last7days, last30days
+--output FILENAME     # Custom filename
+--no-summary          # Exclude summary stats
+--hide-empty          # Hide empty categories
+--test-api            # Test connection
+--verbose, -v         # Detailed logging
+```
+
+### Categorization Rules
+
+Customize in `src/data_processor.py`:
+
+```python
+CATEGORY_RULES = {
+    'what_to_do_more_of': {
+        'ecpa_max': 50.0,          # eCPA < $50
+        'conversions_min': 5,       # At least 5 conversions
+        'spend_min': 250.0          # Spent at least $250
+    },
+    'to_watch': {
+        'ecpa_min': 100.0,          # eCPA $100-$200
+        'ecpa_max': 200.0,
+        'conversions_min': 3,
+        'budget_velocity_min': 70.0,  # 70-90% budget used
+        'budget_velocity_max': 90.0
+    },
+    # ... and more
+}
+```
+
+---
+
 ## 📁 Project Structure
 
 ```
@@ -308,6 +425,7 @@ TJ_tool/
 │   │   ├── Gay.csv
 │   │   └── Broad.csv
 │   ├── output/                   ← Summary reports (auto-generated)
+│   ├── reports/                  ← Performance reports (auto-generated)
 │   └── session/                  ← Saved login (auto-generated)
 │
 ├── logs/                         ← Detailed logs (auto-generated)
@@ -318,12 +436,16 @@ TJ_tool/
 │   ├── uploader.py               ← CSV upload automation
 │   ├── csv_processor.py          ← URL updates & CSV validation
 │   ├── campaign_manager.py       ← Batch processing & reporting
+│   ├── api_client.py             ← TrafficJunky API client
+│   ├── data_processor.py         ← Metrics calculation & categorization
+│   ├── report_generator.py       ← Markdown report generation
 │   └── utils.py                  ← Helper functions
 │
 ├── config/
 │   └── config.py                 ← Configuration loader
 │
-├── main.py                       ← RUN THIS!
+├── main.py                       ← Creative upload tool
+├── analyze.py                    ← Performance analysis tool (NEW!)
 ├── requirements.txt              ← Python dependencies
 ├── setup.sh                      ← Setup script
 └── README.md                     ← You are here
