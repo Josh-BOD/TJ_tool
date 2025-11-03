@@ -241,16 +241,36 @@ class TJUploader:
     def _click_create_ads(self, page: Page) -> bool:
         """Click 'Create ad(s)' button."""
         try:
-            logger.info("Clicking 'Create ad(s)' button...")
+            logger.info("Looking for 'Create ad(s)' button...")
             
-            # Find and click the create ads button
-            create_btn = page.locator('text=Create ad(s)').first
-            create_btn.click()
+            # Find the create ads button by class
+            create_btn = page.locator('button.create-ads-from-csv-button')
+            
+            # Wait for button to be visible
+            logger.info("Waiting for button to be visible...")
+            create_btn.wait_for(state='visible', timeout=10000)
+            
+            # Scroll the button into view
+            logger.info("Scrolling button into view...")
+            create_btn.scroll_into_view_if_needed()
+            
+            # Wait a moment for any animations
+            page.wait_for_timeout(1000)
+            
+            # Click the button
+            logger.info("Clicking 'Create ad(s)' button...")
+            create_btn.click(timeout=10000)
             
             logger.info("✓ Create ads button clicked")
             return True
         except Exception as e:
             logger.error(f"Failed to click create ads: {e}")
+            # Try to get a screenshot for debugging
+            try:
+                page.screenshot(path='./screenshots/create_ads_error.png')
+                logger.error("Screenshot saved to: ./screenshots/create_ads_error.png")
+            except:
+                pass
             return False
     
     def _take_screenshot(self, page: Page, name: str, screenshot_dir: Optional[Path]):
