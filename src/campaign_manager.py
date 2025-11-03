@@ -50,7 +50,7 @@ class CampaignManager:
     
     def load_campaigns(self) -> bool:
         """
-        Load campaigns from mapping file.
+        Load campaigns from mapping file with validation.
         
         Returns:
             True if loaded successfully, False otherwise
@@ -59,43 +59,132 @@ class CampaignManager:
             logger.info(f"Loading campaign mapping from {self.mapping_file}")
             
             if not self.mapping_file.exists():
-                logger.error(f"Mapping file not found: {self.mapping_file}")
+                logger.error(f"❌ Mapping file not found: {self.mapping_file}")
+                logger.error(f"   Create it at: data/input/campaign_mapping.csv")
                 return False
             
-            # Read mapping file
-            df = pd.read_csv(self.mapping_file)
+            # Read mapping file with error handling
+            try:
+                df = pd.read_csv(self.mapping_file)
+            except pd.errors.ParserError as e:
+                logger.error(f"❌ CSV parsing error in {self.mapping_file}")
+                logger.error(f"   {str(e)}")
+                logger.error(f"   Common issues:")
+                logger.error(f"   - Unmatched quotes in campaign_name")
+                logger.error(f"   - Extra newlines in cells")
+                logger.error(f"   - Missing commas between columns")
+                return False
+            except Exception as e:
+                logger.error(f"❌ Failed to read mapping file: {e}")
+                return False
             
             # Validate required columns
             required_cols = ['campaign_id', 'csv_filename']
-            if not all(col in df.columns for col in required_cols):
-                logger.error(f"Mapping file missing required columns: {required_cols}")
+            missing_cols = [col for col in required_cols if col not in df.columns]
+            if missing_cols:
+                logger.error(f"❌ Mapping file missing required columns: {missing_cols}")
+                logger.error(f"   Found columns: {list(df.columns)}")
+                logger.error(f"   Required format: campaign_id,csv_filename,campaign_name,enabled")
                 return False
             
-            # Load campaigns
-            for _, row in df.iterrows():
+            # Validate and load campaigns
+            errors_found = []
+            campaign_ids_seen = set()
+            
+            for idx, row in df.iterrows():
+                row_num = idx + 2  # +2 because: +1 for header, +1 for 0-index
+                
+                # Validate campaign_id
+                try:
+                    campaign_id = str(row['campaign_id']).strip()
+                    if not campaign_id or campaign_id == 'nan':
+                        errors_found.append(f"Row {row_num}: Empty campaign_id")
+                        continue
+                except:
+                    errors_found.append(f"Row {row_num}: Invalid campaign_id")
+                    continue
+                
+                # Check for duplicate campaign IDs
+                if campaign_id in campaign_ids_seen:
+                    errors_found.append(f"Row {row_num}: Duplicate campaign_id '{campaign_id}'")
+                    continue
+                campaign_ids_seen.add(campaign_id)
+                
+                # Validate csv_filename
+                try:
+                    csv_filename = str(row['csv_filename']).strip()
+                    if not csv_filename or csv_filename == 'nan':
+                        errors_found.append(f"Row {row_num}: Empty csv_filename for campaign {campaign_id}")
+                        continue
+                    # Check for invalid characters (quotes, newlines)
+                    if '"' in csv_filename or '\n' in csv_filename:
+                        errors_found.append(f"Row {row_num}: Invalid characters in csv_filename for campaign {campaign_id}")
+                        continue
+                except:
+                    errors_found.append(f"Row {row_num}: Invalid csv_filename for campaign {campaign_id}")
+                    continue
+                
+                # Parse enabled column (be flexible with TRUE/True/true/1)
+                enabled_value = str(row.get('enabled', 'true')).strip().lower()
+                if enabled_value in ['true', '1', 'yes', 't']:
+                    enabled = True
+                elif enabled_value in ['false', '0', 'no', 'f', 'nan', '']:
+                    enabled = False
+                else:
+                    errors_found.append(f"Row {row_num}: Invalid 'enabled' value '{enabled_value}' for campaign {campaign_id} (use 'true' or 'false')")
+                    enabled = False
+                
+                # Get campaign name (optional)
+                campaign_name = str(row.get('campaign_name', '')).strip()
+                if campaign_name == 'nan':
+                    campaign_name = ''
+                
+                # Create campaign
                 campaign = Campaign(
-                    campaign_id=str(row['campaign_id']),
-                    csv_filename=row['csv_filename'],
-                    campaign_name=row.get('campaign_name', ''),
-                    enabled=str(row.get('enabled', 'true')).lower() == 'true'
+                    campaign_id=campaign_id,
+                    csv_filename=csv_filename,
+                    campaign_name=campaign_name,
+                    enabled=enabled
                 )
                 
                 # Verify CSV file exists
                 csv_path = self.csv_input_dir / campaign.csv_filename
                 if not csv_path.exists():
-                    logger.warning(f"CSV not found for campaign {campaign.campaign_id}: {csv_path}")
+                    logger.warning(f"⚠️  Row {row_num}: CSV not found for campaign {campaign.campaign_id}: {csv_filename}")
                     campaign.enabled = False
                     campaign.error = f"CSV file not found: {campaign.csv_filename}"
                 
                 self.campaigns.append(campaign)
             
+            # Report validation errors
+            if errors_found:
+                logger.error(f"❌ Found {len(errors_found)} validation error(s) in mapping file:")
+                for error in errors_found[:10]:  # Show first 10 errors
+                    logger.error(f"   {error}")
+                if len(errors_found) > 10:
+                    logger.error(f"   ... and {len(errors_found) - 10} more errors")
+                logger.error(f"")
+                logger.error(f"💡 Fix the errors in: {self.mapping_file}")
+                logger.error(f"   Then run the tool again.")
+                return False
+            
+            if len(self.campaigns) == 0:
+                logger.error(f"❌ No valid campaigns found in mapping file")
+                return False
+            
             enabled_count = sum(1 for c in self.campaigns if c.enabled)
             logger.info(f"✓ Loaded {len(self.campaigns)} campaigns ({enabled_count} enabled)")
+            
+            # Show warning for disabled campaigns
+            disabled = [c for c in self.campaigns if not c.enabled]
+            if disabled:
+                logger.info(f"⊘ Skipping {len(disabled)} disabled/invalid campaigns")
             
             return True
             
         except Exception as e:
-            logger.error(f"Failed to load campaigns: {e}")
+            logger.error(f"❌ Failed to load campaigns: {e}")
+            logger.exception("Detailed error:")
             return False
     
     def get_next_campaign(self) -> Optional[Campaign]:

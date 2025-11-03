@@ -2,8 +2,10 @@
 
 import logging
 import pandas as pd
+import re
 from pathlib import Path
 from typing import List, Tuple
+from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +132,67 @@ class CSVProcessor:
         except Exception as e:
             logger.error(f"Failed to clean CSV: {e}")
             raise
+    
+    @staticmethod
+    def update_campaign_name_in_urls(csv_path: Path, campaign_name: str) -> Path:
+        """
+        Update sub11 parameter in all URLs to use the campaign name.
+        
+        Args:
+            csv_path: Path to original CSV
+            campaign_name: Campaign name to insert into sub11 parameter
+            
+        Returns:
+            Path to updated CSV file
+        """
+        try:
+            logger.info(f"Updating URLs with campaign name: {campaign_name}")
+            
+            # Read CSV
+            df = pd.read_csv(csv_path)
+            
+            # Function to update a single URL
+            def update_url(url):
+                if pd.isna(url) or not url:
+                    return url
+                
+                try:
+                    # Simple regex replacement for sub11 parameter
+                    # Matches: sub11=anything&  OR  sub11=anything (end of string)
+                    updated_url = re.sub(
+                        r'sub11=[^&]*',
+                        f'sub11={campaign_name}',
+                        str(url)
+                    )
+                    return updated_url
+                except Exception as e:
+                    logger.warning(f"Failed to update URL: {e}")
+                    return url
+            
+            # Update all URL columns
+            url_columns = ['Target URL', 'Custom CTA URL', 'Banner CTA URL']
+            urls_updated = 0
+            
+            for col in url_columns:
+                if col in df.columns:
+                    original_urls = df[col].copy()
+                    df[col] = df[col].apply(update_url)
+                    # Count how many were actually changed
+                    urls_updated += (original_urls != df[col]).sum()
+            
+            # Save updated CSV to temporary location
+            output_path = csv_path.parent / f"{csv_path.stem}_campaign_{campaign_name[:20]}{csv_path.suffix}"
+            df.to_csv(output_path, index=False)
+            
+            logger.info(f"✓ Updated {urls_updated} URLs with campaign name")
+            logger.info(f"✓ Updated CSV saved: {output_path.name}")
+            
+            return output_path
+            
+        except Exception as e:
+            logger.error(f"Failed to update URLs in CSV: {e}")
+            # Return original path if update fails
+            return csv_path
     
     @staticmethod
     def get_csv_summary(csv_path: Path) -> dict:

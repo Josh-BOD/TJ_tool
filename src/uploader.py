@@ -29,7 +29,8 @@ class TJUploader:
         page: Page, 
         campaign_id: str, 
         csv_path: Path,
-        screenshot_dir: Optional[Path] = None
+        screenshot_dir: Optional[Path] = None,
+        skip_navigation: bool = False
     ) -> Dict:
         """
         Upload CSV to a specific campaign.
@@ -54,10 +55,13 @@ class TJUploader:
         try:
             logger.info(f"Processing campaign {campaign_id}...")
             
-            # Step 1: Navigate to campaign ad settings
-            if not self._navigate_to_campaign(page, campaign_id):
-                result['error'] = "Failed to navigate to campaign"
-                return result
+            # Step 1: Navigate to campaign ad settings (unless already there)
+            if not skip_navigation:
+                if not self._navigate_to_campaign(page, campaign_id):
+                    result['error'] = "Failed to navigate to campaign"
+                    return result
+            else:
+                logger.info("Skipping navigation (already on campaign page)")
             
             self._take_screenshot(page, f"01_campaign_{campaign_id}_loaded", screenshot_dir)
             
@@ -148,6 +152,46 @@ class TJUploader:
         except Exception as e:
             logger.error(f"Navigation failed: {e}")
             return False
+    
+    def get_campaign_name_from_page(self, page: Page) -> str:
+        """
+        Extract the actual campaign name from TrafficJunky page.
+        
+        Args:
+            page: Playwright page object (should be on campaign page)
+            
+        Returns:
+            Campaign name from TJ, or empty string if not found
+        """
+        try:
+            # Try to find campaign name at the top of the page
+            # It's usually in a heading or title element
+            selectors_to_try = [
+                'h1.campaign-name',
+                'h1',
+                '.campaign-title',
+                '[class*="campaign"][class*="name"]',
+                'h2'
+            ]
+            
+            for selector in selectors_to_try:
+                try:
+                    element = page.locator(selector).first
+                    if element.is_visible(timeout=2000):
+                        text = element.inner_text()
+                        # Skip generic headings
+                        if text and len(text) > 5 and 'STEP' not in text:
+                            logger.info(f"✓ Found campaign name from TJ: {text}")
+                            return text.strip()
+                except:
+                    continue
+            
+            logger.warning("Could not extract campaign name from page")
+            return ""
+            
+        except Exception as e:
+            logger.warning(f"Error extracting campaign name: {e}")
+            return ""
     
     def _count_existing_ads(self, page: Page) -> int:
         """Count existing ads in the campaign."""

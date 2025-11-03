@@ -234,12 +234,30 @@ def main():
                     campaign = campaign_manager.get_next_campaign()
                     continue
                 
-                # Upload
+                # Navigate to campaign first to get actual campaign name
+                logger.info("Navigating to campaign to get actual name from TJ...")
+                if not uploader._navigate_to_campaign(page, campaign.campaign_id):
+                    campaign_manager.mark_failed(campaign, "Failed to navigate to campaign")
+                    campaign = campaign_manager.get_next_campaign()
+                    continue
+                
+                # Get actual campaign name from TrafficJunky page
+                tj_campaign_name = uploader.get_campaign_name_from_page(page)
+                if not tj_campaign_name:
+                    logger.warning("Could not get campaign name from TJ, using mapping name")
+                    tj_campaign_name = campaign.campaign_name
+                
+                # Update URLs with actual TJ campaign name (sub11 parameter)
+                logger.info(f"Updating URLs with TJ campaign name: {tj_campaign_name}")
+                csv_path = CSVProcessor.update_campaign_name_in_urls(csv_path, tj_campaign_name)
+                
+                # Upload (navigation already done above)
                 result = uploader.upload_to_campaign(
                     page=page,
                     campaign_id=campaign.campaign_id,
                     csv_path=csv_path,
-                    screenshot_dir=Config.SCREENSHOT_DIR
+                    screenshot_dir=Config.SCREENSHOT_DIR,
+                    skip_navigation=True  # We already navigated
                 )
                 
                 # Handle result
