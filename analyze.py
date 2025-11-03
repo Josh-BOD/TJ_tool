@@ -80,9 +80,9 @@ Examples:
     
     parser.add_argument(
         '--period',
-        choices=['today', 'yesterday', 'last7days', 'last30days'],
+        choices=['yesterday', 'last7days', 'last30days'],
         default=Config.DEFAULT_TIME_PERIOD,
-        help='Time period to analyze (default: today)'
+        help='Time period to analyze (default: yesterday)'
     )
     
     parser.add_argument(

@@ -187,7 +187,7 @@ class TrafficJunkyAPIClient:
         Get date range for common time periods.
         
         Args:
-            period: One of 'today', 'yesterday', 'last7days', 'last30days'
+            period: One of 'yesterday', 'last7days', 'last30days'
             
         Returns:
             Tuple of (start_date, end_date)
@@ -196,20 +196,18 @@ class TrafficJunkyAPIClient:
             ValueError: If period is invalid
         """
         today = datetime.now()
+        yesterday = today - timedelta(days=1)
         
-        if period == 'today':
-            return (today, today)
-        elif period == 'yesterday':
-            yesterday = today - timedelta(days=1)
+        if period == 'yesterday':
             return (yesterday, yesterday)
         elif period == 'last7days':
             start = today - timedelta(days=7)
-            return (start, today)
+            return (start, yesterday)  # End at yesterday, not today
         elif period == 'last30days':
             start = today - timedelta(days=30)
-            return (start, today)
+            return (start, yesterday)  # End at yesterday, not today
         else:
-            raise ValueError(f"Invalid period: {period}. Must be one of: today, yesterday, last7days, last30days")
+            raise ValueError(f"Invalid period: {period}. Must be one of: yesterday, last7days, last30days")
     
     def test_connection(self) -> bool:
         """
@@ -219,8 +217,8 @@ class TrafficJunkyAPIClient:
             True if connection successful, False otherwise
         """
         try:
-            # Try to fetch today's stats (minimal request)
-            start, end = self.get_date_range('today')
+            # Try to fetch yesterday's stats (minimal request)
+            start, end = self.get_date_range('yesterday')
             self.get_campaigns_stats(start, end, limit=1)
             logger.info("API connection test successful")
             return True

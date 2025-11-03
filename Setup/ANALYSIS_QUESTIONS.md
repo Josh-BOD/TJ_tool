@@ -10,7 +10,7 @@ These questions will help us build an automated tool that pulls data from Traffi
 
 **Question**: How should we pull campaign performance data from TrafficJunky?
 
-- [ ] **Option A**: TrafficJunky Reporting API
+- [X] **Option A**: TrafficJunky Reporting API - If this works the best then yes.
   - Use `/reporting/campaigns` endpoint
   - Pull structured data (spend, conversions, impressions, etc.)
   - Clean, reliable, fast
@@ -42,21 +42,21 @@ These questions will help us build an automated tool that pulls data from Traffi
 **Question**: Which performance metrics do we need to pull and analyze?
 
 **Core Metrics** (check all that apply):
-- [ ] Spend (total cost)
-- [ ] Conversions (total conversions)
-- [ ] eCPA (cost per acquisition)
+- [X] Spend (total cost)
+- [X] Conversions (total conversions)
+- [X] eCPA (cost per acquisition)
 - [ ] Impressions
-- [ ] Clicks
-- [ ] CTR (click-through rate)
-- [ ] CVR (conversion rate)
-- [ ] Revenue (if tracked)
-- [ ] ROAS (return on ad spend)
+- [X] Clicks
+- [X] CTR (click-through rate)
+- [X] CVR (conversion rate)
+- [X] Revenue (if tracked)
+- [X] ROAS (return on ad spend)
 
 **Calculated Metrics**:
-- [ ] eCPA = Spend / Conversions
-- [ ] CTR = Clicks / Impressions
-- [ ] CVR = Conversions / Clicks
-- [ ] ROAS = Revenue / Spend
+- [X] eCPA = Spend / Conversions
+- [X] CTR = Clicks / Impressions
+- [X] CVR = Conversions / Clicks
+- [X] ROAS = Revenue / Spend
 
 **Other Metrics** (specify):
 ```
@@ -73,15 +73,15 @@ These questions will help us build an automated tool that pulls data from Traffi
 
 **Question**: What time period should the report cover?
 
-- [ ] **Today** (last 24 hours)
+- [X] **Today** (last 24 hours)
   - Most recent performance
   - Daily check-in reports
 
-- [ ] **Yesterday** (previous full day)
+- [X] **Yesterday** (previous full day)
   - Complete day's data
   - Common for daily reports
 
-- [ ] **Last 7 Days** (weekly view)
+- [X] **Last 7 Days** (weekly view)
   - Trend analysis
   - Better for statistical significance
 
@@ -93,13 +93,13 @@ These questions will help us build an automated tool that pulls data from Traffi
   - Flexible date selection
   - Specify: From _________ to _________
 
-- [ ] **Multiple Time Periods**
+- [X] **Multiple Time Periods**
   - Compare periods (e.g., today vs yesterday)
   - Show trend direction (↑ ↓)
 
 **Default Period**: _________________
 
-**Can user override**: [ ] Yes [ ] No
+**Can user override**: [X] Yes [ ] No
 
 ---
 
@@ -112,9 +112,9 @@ These questions will help us build an automated tool that pulls data from Traffi
 **Rule**: Campaigns performing well that should be scaled
 
 **Criteria** (fill in your thresholds):
-- eCPA < $_________ 
-- Conversions > _________
-- Spend > $_________ (minimum spend to qualify)
+- eCPA < $50
+- Conversions > 5
+- Spend > $250 (minimum spend to qualify)
 - AND/OR: _________________________________________
 
 **Example**: eCPA < $50 AND Conversions > 5
@@ -126,10 +126,10 @@ These questions will help us build an automated tool that pulls data from Traffi
 **Rule**: Campaigns that need monitoring (borderline performance)
 
 **Criteria**:
-- eCPA between $_________ and $_________
-- Conversions between _________ and _________
-- Spend > $_________
-- AND/OR: _________________________________________
+- eCPA between $100 and $200
+- Conversions above 3
+- Spend velocity: 70-90% of entire allocated budget (this means has scaleability but needs tweaking.)
+- Cost above $250
 
 **Example**: eCPA between $100-$200 AND Conversions > 2
 
@@ -137,14 +137,13 @@ These questions will help us build an automated tool that pulls data from Traffi
 
 #### **Category: "Scaled" 📈**
 
-**Rule**: Campaigns where budget was recently increased
+**Rule**: Campaigns where budget should be increased
 
 **Criteria**:
-- Budget increased in last _________ days
-- OR: Spend increased by _________% compared to previous period
-- AND: eCPA < $_________
+- Hitting budget limits 
+- AND: eCPA < $60
 
-**How to detect budget changes**:
+**How to detect budget changes**: - N/A
 - [ ] Track budget changes in database
 - [ ] Compare spend period-over-period
 - [ ] Manual tagging in campaign name
@@ -154,19 +153,19 @@ These questions will help us build an automated tool that pulls data from Traffi
 
 #### **Category: "Killed" ❌**
 
-**Rule**: Campaigns that were paused/stopped due to poor performance
+**Rule**: Campaigns that need to be paused/stopped due to poor performance
 
 **Criteria**:
-- eCPA > $_________
-- OR: Zero conversions after $_________ spend
-- OR: Campaign status = "Paused" in TJ
-- AND: Paused in last _________ days
+- eCPA > $ 120
+- Spend > $250
+- only hitting 50-60% of budget velocity
+- OR: Zero conversions after $250 spend
 
 **How to identify killed campaigns**:
 - [ ] Check campaign status in TJ
 - [ ] Track status changes over time
 - [ ] Manual list of killed campaigns
-- [ ] Other: _________________________________________
+- [ ] Other: see above
 
 ---
 
@@ -175,29 +174,10 @@ These questions will help us build an automated tool that pulls data from Traffi
 **Rule**: New campaigns recently created
 
 **Criteria**:
-- Campaign created in last _________ days
-- OR: First spend date within last _________ days
-- Spend > $_________  (minimum to show activity)
+- Campaign created today
 
 **How to identify launch date**:
-- [ ] Campaign creation date from TJ API
-- [ ] First spend date in reporting data
-- [ ] Manual tracking
-- [ ] Other: _________________________________________
-
----
-
-#### **Category: "WIP" 🔧**
-
-**Rule**: Campaigns being actively worked on
-
-**Criteria**:
-- [ ] Manual list/tagging
-- [ ] Campaign name contains "TEST", "WIP", etc.
-- [ ] Recent creative uploads (last _________ days)
-- [ ] Other: _________________________________________
-
-**Please specify**: _________________________________________
+- [X] Campaign creation date from TJ API
 
 ---
 
@@ -207,14 +187,14 @@ These questions will help us build an automated tool that pulls data from Traffi
 
 **Minimum Spend**:
 - [ ] No minimum, show all campaigns
-- [ ] Only show campaigns with spend > $_________
+- [ ] Only show campaigns with spend > $100
 
 **Minimum Data**:
-- [ ] Only show campaigns with at least _________ impressions
+- [ ] Only show campaigns with at least 100 impressions
 - [ ] Only show campaigns with at least _________ days of data
 
 **Campaign Status**:
-- [ ] Only active campaigns
+- [X] Only active campaigns
 - [ ] Active + paused campaigns
 - [ ] All campaigns (including archived)
 
@@ -227,7 +207,7 @@ These questions will help us build an automated tool that pulls data from Traffi
 **Question**: How should the report be formatted and delivered?
 
 #### **Output Format**:
-- [ ] Markdown for Slack Canvas (like the example you provided)
+- [x] Markdown for Slack Canvas (like the example you provided)
 - [ ] CSV file
 - [ ] JSON file
 - [ ] HTML report
@@ -237,13 +217,13 @@ These questions will help us build an automated tool that pulls data from Traffi
 
 **Do you want**:
 - [ ] Campaign name only
-- [ ] Campaign name + key metrics (eCPA, conversions, spend)
+- [X] Campaign name + URL + key metrics (eCPA, conversions, spend)
 - [ ] Campaign name + all metrics
-- [ ] Campaign name + URL to TJ dashboard
+- [] Campaign name + URL to TJ dashboard
 
 **Example Line** (specify your preference):
 ```
-US_EN_PREROLL_CPA_PH_KEY-Blowjob_DESK_M_JB - eCPA: $45.32 | Conv: 12 | Spend: $543.84
+[US_EN_PREROLL_CPA_PH_KEY-Blowjob_DESK_M_JB](https://advertiser.trafficjunky.com/campaign/overview/1013022481) - eCPA: $45.32 | Conv: 12 | Spend: $543.84
 
 OR
 
@@ -264,7 +244,7 @@ OR
 **How should campaigns be sorted in each section?**
 - [ ] By eCPA (lowest first)
 - [ ] By conversions (highest first)
-- [ ] By spend (highest first)
+- [x] By spend (highest first)
 - [ ] Alphabetically
 - [ ] Other: _________________________________________
 
@@ -274,9 +254,9 @@ OR
 
 **Do you want these sections in the report?**
 - [ ] Summary stats (total spend, total conversions, average eCPA)
-- [ ] Trends vs previous period (↑↓ indicators)
+- [x] Trends vs previous period (↑↓ indicators)
 - [ ] Recommendations (auto-generated suggestions)
-- [ ] Budget utilization (% of budget spent)
+- [x] Budget utilization (% of budget spent)
 - [ ] Other: _________________________________________
 
 ---
@@ -286,7 +266,7 @@ OR
 **Question**: Where should reports be saved and how should they be distributed?
 
 #### **Save Location**:
-- [ ] `data/reports/report_YYYY-MM-DD.md`
+- [x] `data/reports/report_DD-MM-YYYY.md`
 - [ ] `data/reports/daily/report_YYYY-MM-DD.md`
 - [ ] `reports/` folder in project root
 - [ ] Other: _________________________________________
@@ -294,11 +274,11 @@ OR
 #### **File Naming**:
 - [ ] `report_2025-11-03.md`
 - [ ] `performance_report_2025-11-03.md`
-- [ ] `tj_analysis_2025-11-03.md`
+- [X] `tj_analysis_2025-11-03.md`
 - [ ] Other: _________________________________________
 
 #### **Distribution**:
-- [ ] **Manual**: Generate file, I copy to Slack Canvas manually
+- [X] **Manual**: Generate file, I copy to Slack Canvas manually
 - [ ] **Clipboard**: Copy report to clipboard automatically
 - [ ] **Slack Webhook**: Auto-post to Slack channel
 - [ ] **Email**: Send via email
@@ -315,7 +295,7 @@ OR
 
 **Question**: How should the analysis tool run?
 
-- [ ] **Manual**: Run command when I want a report
+- [X] **Manual**: Run command when I want a report
   - Example: `python analyze.py`
 
 - [ ] **Scheduled**: Run automatically at specific times
@@ -328,7 +308,7 @@ OR
   - Other: _________________________________________
 
 **Operating System** (for scheduling):
-- [ ] macOS (use launchd or cron)
+- [X] macOS (use launchd or cron)
 - [ ] Linux (use cron)
 - [ ] Windows (use Task Scheduler)
 - [ ] Cloud (use AWS Lambda, etc.)
@@ -339,10 +319,10 @@ OR
 
 **Question**: Should we track data over time to show trends?
 
-- [ ] **No**: Just current period snapshot
+- [X] **No**: Just current period snapshot
   - Simple, report shows current state only
 
-- [ ] **Yes**: Track historical data
+- [] **Yes**: Track historical data
   - Store data in database/CSV
   - Show trends (eCPA improving/worsening)
   - Compare to previous periods
@@ -359,14 +339,14 @@ OR
 
 **Question**: How should the tool authenticate with TrafficJunky?
 
-- [ ] **Use existing session**: Reuse saved session from upload tool
+- [X] **Use existing session**: Reuse saved session from upload tool
   - Fast, no re-login needed
   - Works if both tools use same auth module
 
 - [ ] **Separate login**: Independent authentication
   - More isolated, but requires login
 
-- [ ] **API Key**: If TJ provides API keys
+- [X] **API Key**: If TJ provides API keys
   - Store in `.env`
   - No browser automation needed
 
@@ -380,12 +360,12 @@ OR
 
 **If data pull fails**:
 - [ ] Send error notification (email/Slack)
-- [ ] Log error and exit silently
+- [X] Log error and exit silently
 - [ ] Retry _________ times with _________ second delay
 - [ ] Use cached data if available
 
 **If categorization rules have no campaigns**:
-- [ ] Show empty section: "What to do more of: None"
+- [X] Show empty section: "What to do more of: None"
 - [ ] Hide empty sections
 - [ ] Show message: "No campaigns meet criteria"
 
@@ -405,7 +385,7 @@ OR
 - [ ] Campaign name contains: _________________________________________ (e.g., "TEST", "PAUSE", "OLD")
 - [ ] Campaign status = _________________________________________
 - [ ] Campaign type = _________________________________________
-- [ ] Zero spend
+- [X] Zero spend
 - [ ] Created before _________ (date)
 
 **Include only campaigns with**:
@@ -464,7 +444,7 @@ OR
 
 **What data fields are available from TrafficJunky?**
 
-Please review the TJ API documentation or export a sample report and list available fields:
+Please review the TJ API documentation or export a sample report and list available fields: Will need to check yourself
 
 **Available Fields**:
 ```
@@ -491,12 +471,12 @@ Example:
 
 **Question**: What date/time range should "today" mean?
 
-- [ ] Midnight to midnight (00:00 - 23:59) in timezone: _________
+- [X] Midnight to midnight (00:00 - 23:59) in timezone: _________
 - [ ] Last 24 hours from now
 - [ ] Current day so far (00:00 to now)
 
 **Timezone**:
-- [ ] UTC
+- [X] EST (TJ reports iN EST)
 - [ ] Local timezone (specify): _________
 - [ ] TJ account timezone
 
@@ -508,13 +488,13 @@ Example:
 
 Rank 1-7 (1 = most important):
 
-- [ ] ___ Accurate categorization (correct thresholds)
-- [ ] ___ Fast execution (< 1 minute)
+- [2] ___ Accurate categorization (correct thresholds)
+- [1] ___ Fast execution (< 1 minute)
 - [ ] ___ Slack integration (auto-post)
 - [ ] ___ Historical tracking (trends over time)
 - [ ] ___ Error alerts (notify on issues)
-- [ ] ___ Flexible filters (include/exclude campaigns)
-- [ ] ___ Custom metrics (define your own rules)
+- [3] ___ Flexible filters (include/exclude campaigns)
+- [4] ___ Custom metrics (define your own rules)
 
 ---
 
@@ -522,17 +502,17 @@ Rank 1-7 (1 = most important):
 
 ### Programming Language
 
-- [ ] Python (same as upload tool)
+- [x] Python (same as upload tool)
 - [ ] TypeScript/Node.js
 - [ ] Other: _________________________________________
 
 ### Dependencies
 
 **Are you okay with**:
-- [ ] Using pandas for data analysis
-- [ ] Using requests/playwright for data fetching
-- [ ] Using database (SQLite) for historical tracking
-- [ ] Installing additional packages
+- [X] Using pandas for data analysis
+- [X] Using requests/playwright for data fetching
+- [X] Using database (SQLite) for historical tracking
+- [X] Installing additional packages
 
 ---
 
@@ -540,7 +520,7 @@ Rank 1-7 (1 = most important):
 
 **To build and test the tool, please provide**:
 
-- [ ] Sample TJ API response (JSON)
+- [ ] Sample TJ API response (JSON) - get it yourself 
 - [ ] Sample TJ report export (CSV/Excel)
 - [ ] Sample campaign data for testing
 - [ ] Screenshots of TJ reporting dashboard

@@ -70,7 +70,7 @@ class Config:
     # ====================================
     # Reporting Settings
     # ====================================
-    DEFAULT_TIME_PERIOD: str = os.getenv('DEFAULT_TIME_PERIOD', 'today')  # today, yesterday, last7days
+    DEFAULT_TIME_PERIOD: str = os.getenv('DEFAULT_TIME_PERIOD', 'yesterday')  # yesterday, last7days, last30days
     TIMEZONE: str = 'America/New_York'  # EST - TJ reports in EST
     
     @classmethod
