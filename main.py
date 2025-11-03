@@ -163,25 +163,52 @@ def main():
                 slow_mo=Config.SLOW_MO if not headless else 0
             )
             
-            # Create context and page
-            context = browser.new_context(
-                viewport={'width': 1920, 'height': 1080}
-            )
-            page = context.new_page()
-            page.set_default_timeout(Config.TIMEOUT)
-            
             print_success("Browser launched")
             
-            # Authenticate
-            logger.info("Authenticating...")
+            # Initialize authenticator
             authenticator = TJAuthenticator(Config.TJ_USERNAME, Config.TJ_PASSWORD)
             
-            if not authenticator.login(page):
-                print_error("Authentication failed")
-                browser.close()
-                return 1
+            # Try to load saved session first
+            context = authenticator.load_session(browser)
             
-            print_success("Logged into TrafficJunky")
+            if context:
+                # Session loaded, verify it's still valid
+                page = context.new_page()
+                page.set_default_timeout(Config.TIMEOUT)
+                
+                logger.info("Checking if saved session is still valid...")
+                page.goto('https://advertiser.trafficjunky.com/campaigns', wait_until='domcontentloaded')
+                
+                if authenticator.is_logged_in(page):
+                    print_success("Logged in using saved session")
+                else:
+                    logger.warning("Saved session expired, need to login again")
+                    context.close()
+                    context = None
+            
+            # If no valid session, do manual login
+            if not context:
+                # Create new context
+                context = browser.new_context(
+                    viewport={'width': 1920, 'height': 1080}
+                )
+                page = context.new_page()
+                page.set_default_timeout(Config.TIMEOUT)
+                
+                # Manual login (user solves reCAPTCHA)
+                logger.info("No valid session found, manual login required...")
+                print_warning("⚠️  Manual login required - browser window will open")
+                
+                if not authenticator.manual_login(page, timeout=120):
+                    print_error("Authentication failed or timed out")
+                    browser.close()
+                    return 1
+                
+                # Save session for future use
+                authenticator.save_session(context)
+                print_success("Logged into TrafficJunky (session saved)")
+            else:
+                print_success("Using saved session (no login needed)")
             
             # Initialize uploader
             uploader = TJUploader(

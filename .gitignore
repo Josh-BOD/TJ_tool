@@ -46,6 +46,7 @@ logs/*.txt
 data/input/*.csv
 data/output/*.csv
 data/creatives/
+data/session/
 
 # IDE
 .vscode/
