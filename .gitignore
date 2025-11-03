@@ -47,6 +47,7 @@ data/input/*.csv
 data/output/*.csv
 data/creatives/
 data/session/
+data/wip/
 
 # IDE
 .vscode/
@@ -88,6 +89,7 @@ build/
 !data/input/.gitkeep
 !data/output/.gitkeep
 !data/creatives/.gitkeep
+!data/wip/.gitkeep
 !logs/.gitkeep
 
 # Exception: Keep example files

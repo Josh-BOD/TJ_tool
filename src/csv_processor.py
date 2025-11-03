@@ -134,16 +134,18 @@ class CSVProcessor:
             raise
     
     @staticmethod
-    def update_campaign_name_in_urls(csv_path: Path, campaign_name: str) -> Path:
+    def update_campaign_name_in_urls(csv_path: Path, campaign_name: str, wip_dir: Path) -> Path:
         """
         Update sub11 parameter in all URLs to use the campaign name.
+        Saves to WIP folder to keep input folder clean.
         
         Args:
             csv_path: Path to original CSV
             campaign_name: Campaign name to insert into sub11 parameter
+            wip_dir: Work In Progress directory for temporary files
             
         Returns:
-            Path to updated CSV file
+            Path to updated CSV file in WIP folder
         """
         try:
             logger.info(f"Updating URLs with campaign name: {campaign_name}")
@@ -180,12 +182,12 @@ class CSVProcessor:
                     # Count how many were actually changed
                     urls_updated += (original_urls != df[col]).sum()
             
-            # Save updated CSV to temporary location
-            output_path = csv_path.parent / f"{csv_path.stem}_campaign_{campaign_name[:20]}{csv_path.suffix}"
+            # Save updated CSV to WIP folder (keeps input folder clean)
+            output_path = wip_dir / f"{csv_path.stem}_campaign_{campaign_name[:20]}{csv_path.suffix}"
             df.to_csv(output_path, index=False)
             
             logger.info(f"✓ Updated {urls_updated} URLs with campaign name")
-            logger.info(f"✓ Updated CSV saved: {output_path.name}")
+            logger.info(f"✓ Updated CSV saved to WIP: {output_path.name}")
             
             return output_path
             

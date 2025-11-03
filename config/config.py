@@ -32,6 +32,7 @@ class Config:
     CSV_INPUT_DIR: Path = BASE_DIR / os.getenv('CSV_INPUT_DIR', './data/input')
     CSV_OUTPUT_DIR: Path = BASE_DIR / os.getenv('CSV_OUTPUT_DIR', './data/output')
     REPORT_OUTPUT_DIR: Path = BASE_DIR / os.getenv('REPORT_OUTPUT_DIR', './data/reports')
+    WIP_DIR: Path = BASE_DIR / os.getenv('WIP_DIR', './data/wip')  # Work In Progress - temporary modified CSVs
     LOG_DIR: Path = BASE_DIR / os.getenv('LOG_DIR', './logs')
     CREATIVE_DIR: Path = BASE_DIR / os.getenv('CREATIVE_DIR', './data/creatives')
     SCREENSHOT_DIR: Path = BASE_DIR / 'screenshots'
@@ -91,7 +92,7 @@ class Config:
         
         # Ensure directories exist
         for dir_path in [cls.CSV_INPUT_DIR, cls.CSV_OUTPUT_DIR, cls.REPORT_OUTPUT_DIR,
-                        cls.LOG_DIR, cls.CREATIVE_DIR, cls.SCREENSHOT_DIR]:
+                        cls.WIP_DIR, cls.LOG_DIR, cls.CREATIVE_DIR, cls.SCREENSHOT_DIR]:
             dir_path.mkdir(parents=True, exist_ok=True)
         
         return errors

@@ -28,6 +28,44 @@ from src.csv_processor import CSVProcessor
 from src.campaign_manager import CampaignManager
 
 
+def cleanup_wip_folder():
+    """Prompt user to clean up WIP folder with temporary CSV files."""
+    import shutil
+    
+    # Check if WIP folder has files
+    wip_files = list(Config.WIP_DIR.glob('*'))
+    if not wip_files:
+        return
+    
+    print("\n" + "="*60)
+    print_info(f"WIP Folder Cleanup")
+    print("="*60)
+    print_info(f"Found {len(wip_files)} temporary file(s) in: {Config.WIP_DIR}")
+    print_info("These are modified CSV files created during the upload process.")
+    print("")
+    
+    # Show first few files as examples
+    for f in wip_files[:5]:
+        print(f"  - {f.name}")
+    if len(wip_files) > 5:
+        print(f"  ... and {len(wip_files) - 5} more")
+    
+    print("")
+    response = input("Do you want to delete these temporary files? [y/N]: ").strip().lower()
+    
+    if response == 'y':
+        try:
+            shutil.rmtree(Config.WIP_DIR)
+            Config.WIP_DIR.mkdir(parents=True, exist_ok=True)
+            print_success(f"✓ Cleaned up {len(wip_files)} file(s) from WIP folder")
+        except Exception as e:
+            print_error(f"Failed to clean up WIP folder: {e}")
+    else:
+        print_info("Skipped cleanup - files remain in WIP folder")
+    
+    print("="*60 + "\n")
+
+
 def parse_arguments():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
@@ -247,9 +285,12 @@ def main():
                     logger.warning("Could not get campaign name from TJ, using mapping name")
                     tj_campaign_name = campaign.campaign_name
                 
+                # Update campaign object with actual TJ name for reporting
+                campaign.campaign_name = tj_campaign_name
+                
                 # Update URLs with actual TJ campaign name (sub11 parameter)
                 logger.info(f"Updating URLs with TJ campaign name: {tj_campaign_name}")
-                csv_path = CSVProcessor.update_campaign_name_in_urls(csv_path, tj_campaign_name)
+                csv_path = CSVProcessor.update_campaign_name_in_urls(csv_path, tj_campaign_name, Config.WIP_DIR)
                 
                 # Upload (navigation already done above)
                 result = uploader.upload_to_campaign(
@@ -336,6 +377,10 @@ def main():
     logger.info(f"Total execution time: {format_duration(duration)}")
     
     print_success(f"Process completed in {format_duration(duration)}")
+    
+    # Offer to clean up WIP folder
+    cleanup_wip_folder()
+    
     logger.info("="*60)
     logger.info("TrafficJunky Automation Tool Finished")
     logger.info("="*60)
