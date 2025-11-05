@@ -51,17 +51,25 @@ def cleanup_wip_folder():
         print(f"  ... and {len(wip_files) - 5} more")
     
     print("")
-    response = input("Do you want to delete these temporary files? [y/N]: ").strip().lower()
     
-    if response == 'y':
-        try:
-            shutil.rmtree(Config.WIP_DIR)
-            Config.WIP_DIR.mkdir(parents=True, exist_ok=True)
-            print_success(f"✓ Cleaned up {len(wip_files)} file(s) from WIP folder")
-        except Exception as e:
-            print_error(f"Failed to clean up WIP folder: {e}")
+    # Check if stdin is available (not running in background)
+    import sys
+    if sys.stdin.isatty():
+        response = input("Do you want to delete these temporary files? [y/N]: ").strip().lower()
+        
+        if response == 'y':
+            try:
+                shutil.rmtree(Config.WIP_DIR)
+                Config.WIP_DIR.mkdir(parents=True, exist_ok=True)
+                print_success(f"✓ Cleaned up {len(wip_files)} file(s) from WIP folder")
+            except Exception as e:
+                print_error(f"Failed to clean up WIP folder: {e}")
+        else:
+            print_info("Skipped cleanup - files remain in WIP folder")
     else:
-        print_info("Skipped cleanup - files remain in WIP folder")
+        # Running in background or stdin not available
+        print_info("ℹ Running in background mode - skipping cleanup prompt")
+        print_info("ℹ You can manually delete files from data/wip/ or run the tool again in foreground")
     
     print("="*60 + "\n")
 
