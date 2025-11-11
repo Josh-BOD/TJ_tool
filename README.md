@@ -2,6 +2,21 @@
 
 **Automate bulk ad creative uploads to TrafficJunky campaigns** - Tested and working with 400+ campaigns.
 
+## 📌 Two Upload Tools Available
+
+### 1. **Preroll/Video Ad Uploader** (`main.py`)
+- For Preroll/Video ad campaigns
+- Standard CSV format with 10 columns
+- Includes Custom CTA fields, Banner CTA fields, etc.
+
+### 2. **Native Ad Uploader** (`native_main.py`) 🆕
+- For Native ad campaigns
+- Simplified CSV format with 6 columns
+- Video Creative ID + Thumbnail Creative ID + Headline + Brand Name
+- **See [NATIVE_QUICK_START.md](NATIVE_QUICK_START.md) for full guide**
+
+---
+
 ## 📌 Why This Tool?
 
 TrafficJunky's API doesn't support uploading new ad creatives. This tool automates the manual "Mass Create with CSV" process:
@@ -63,7 +78,9 @@ TJ_PASSWORD=your_password
 
 ---
 
-## 📋 How to Use
+## 📋 How to Use (Preroll/Video Ads)
+
+> **For Native Ads:** See [NATIVE_QUICK_START.md](NATIVE_QUICK_START.md)
 
 ### Step 1: Configure Your Campaigns
 
@@ -87,15 +104,21 @@ campaign_id,csv_filename,campaign_name,enabled
 - Same CSV can be used for multiple campaigns
 - Use `enabled=false` to skip campaigns without deleting them
 
-### Step 2: Prepare Your CSV Files
+### Step 2: Prepare Your CSV Files (Preroll Format)
 
 Place your ad CSVs in `data/input/` folder:
 
-**Required columns:**
+**Required columns for Preroll ads:**
 ```csv
 Ad Name,Target URL,Creative ID,Custom CTA Text,Custom CTA URL,Banner CTA Creative ID,Banner CTA Title,Banner CTA Subtitle,Banner CTA URL,Tracking Pixel
 TEST_AD_1,https://example.com/...,1032473171,Click Here,https://example.com/...,,,,, 
 ```
+
+**For Native ads (different format):**
+```csv
+"Ad Name","Target URL","Video Creative ID","Thumbnail Creative ID",Headline,"Brand Name"
+```
+See [NATIVE_QUICK_START.md](NATIVE_QUICK_START.md) for Native ad format details.
 
 **Important:** 
 - Creative IDs must already exist in TrafficJunky
@@ -246,11 +269,12 @@ The tool validates your mapping CSV and shows helpful errors:
 - The CSV only references existing Creative IDs
 - Tool does NOT upload creative files (images/videos)
 
-### 4. Session Persistence
+### 4. Session Management
 
-After first login, the session is saved. You won't need to login again unless:
-- Session expires (~24 hours)
-- You run `rm -rf data/session/`
+Sessions are automatically deleted after each run for security. This means:
+- ✅ Fresh login each time (more secure)
+- ✅ No stale session issues
+- ✅ Consistent behavior across runs
 
 ---
 
@@ -433,8 +457,10 @@ TJ_tool/
 │
 ├── src/
 │   ├── auth.py                   ← Authentication & session handling
-│   ├── uploader.py               ← CSV upload automation
-│   ├── csv_processor.py          ← URL updates & CSV validation
+│   ├── uploader.py               ← Preroll CSV upload automation
+│   ├── csv_processor.py          ← Preroll URL updates & CSV validation
+│   ├── native_uploader.py        ← Native CSV upload automation (NEW!)
+│   ├── native_csv_processor.py   ← Native URL updates & CSV validation (NEW!)
 │   ├── campaign_manager.py       ← Batch processing & reporting
 │   ├── api_client.py             ← TrafficJunky API client
 │   ├── data_processor.py         ← Metrics calculation & categorization
@@ -444,11 +470,13 @@ TJ_tool/
 ├── config/
 │   └── config.py                 ← Configuration loader
 │
-├── main.py                       ← Creative upload tool
-├── analyze.py                    ← Performance analysis tool (NEW!)
+├── main.py                       ← Preroll creative upload tool
+├── native_main.py                ← Native creative upload tool (NEW!)
+├── analyze.py                    ← Performance analysis tool
 ├── requirements.txt              ← Python dependencies
 ├── setup.sh                      ← Setup script
-└── README.md                     ← You are here
+├── README.md                     ← You are here
+└── NATIVE_QUICK_START.md         ← Native ad upload guide (NEW!)
 ```
 
 ---
@@ -587,7 +615,7 @@ campaign_id,csv_filename,campaign_name,enabled
 
 ## 🎉 Success Stories
 
-**Actual Test Results:**
+**Preroll Test Results:**
 
 ```
 Campaign 1: US_EN_PREROLL_CPA_PH_KEY-BLOWJOB_DESK_M_JB_AUTOTEST
@@ -608,12 +636,27 @@ Campaign 3: US_EN_PREROLL_CPA_PH_KEY-BLOWJOB_DESK_M_JB_AUTOTEST3
 Total: 22 ads in 61 seconds - 100% success rate!
 ```
 
+**Native Ad Test Results:** ✨ NEW!
+
+```
+Campaign: JB_NATIVE_TEST (1013047181)
+  ✅ 2 Native ads created
+  ✅ URLs updated with campaign name  
+  ✅ Video + Thumbnail creatives uploaded
+  ✅ Headlines and brand names applied
+  ⏱️  1 minute 8 seconds
+
+Total: 2 Native ads - 100% success rate!
+```
+
 ---
 
-**Version**: 1.0.0  
+**Version**: 1.1.0  
 **Status**: ✅ Production Ready  
-**Last Updated**: November 3, 2025  
-**Tested**: 3 campaigns, 22 ads, 100% success
+**Last Updated**: November 11, 2025  
+**Tested**: 
+- Preroll: 3 campaigns, 22 ads, 100% success
+- Native: 1 campaign, 2 ads, 100% success ✨ NEW!
 
 ---
 

@@ -1,0 +1,4 @@
+"Ad Name","Target URL","Video Creative ID","Thumbnail Creative ID",Headline,"Brand Name"
+"Example Native Ad 1","https://example.com?sub1={CampaignID}&sub11=CAMPAIGN_NAME","1032473171","1032473180","Amazing AI Experience","MyBrand"
+"Example Native Ad 2","https://example.com?sub1={CampaignID}&sub11=CAMPAIGN_NAME","1032468251","1032468260","Try It Now","MyBrand"
+

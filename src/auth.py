@@ -262,12 +262,16 @@ class TJAuthenticator:
                 
                 username_input = page.locator('input[placeholder*="USERNAME"]').first
                 username_input.click()
-                username_input.fill(self.username)
+                page.wait_for_timeout(300)
+                # Type character-by-character to trigger JavaScript validation
+                username_input.type(self.username, delay=50)
                 page.wait_for_timeout(300)
                 
                 password_input = page.locator('input[type="password"]').first
                 password_input.click()
-                password_input.fill(self.password)
+                page.wait_for_timeout(300)
+                # Type character-by-character to trigger JavaScript validation
+                password_input.type(self.password, delay=50)
                 page.wait_for_timeout(300)
                 
                 # Click somewhere else to trigger form validation and enable the button
