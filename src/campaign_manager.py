@@ -2,9 +2,13 @@
 
 import logging
 import pandas as pd
+import time
+from collections import deque
 from pathlib import Path
 from typing import List, Dict, Optional
 from datetime import datetime
+
+from src.checkpoint import CheckpointManager
 
 logger = logging.getLogger(__name__)
 
@@ -35,18 +39,28 @@ class Campaign:
 class CampaignManager:
     """Manages campaign-CSV mappings and batch processing."""
     
-    def __init__(self, mapping_file: Path, csv_input_dir: Path):
+    def __init__(self, mapping_file: Path, csv_input_dir: Path, checkpoint_file: Optional[Path] = None):
         """
         Initialize campaign manager.
         
         Args:
             mapping_file: Path to campaign mapping CSV
             csv_input_dir: Directory containing CSV files
+            checkpoint_file: Optional path to checkpoint file for resume functionality
         """
         self.mapping_file = mapping_file
         self.csv_input_dir = csv_input_dir
         self.campaigns: List[Campaign] = []
         self.results: List[Dict] = []
+        
+        # Progress tracking
+        self.start_time = None
+        self.campaign_times = deque(maxlen=10)  # Track last 10 upload times for moving average
+        self.completed_count = 0
+        
+        # Checkpoint management
+        self.checkpoint = CheckpointManager(checkpoint_file) if checkpoint_file else None
+        self.retry_failed = False
     
     def load_campaigns(self) -> bool:
         """
@@ -196,6 +210,17 @@ class CampaignManager:
         """
         for campaign in self.campaigns:
             if campaign.enabled and campaign.status == 'pending':
+                # If checkpoint exists, check if we should process this campaign
+                if self.checkpoint:
+                    if not self.checkpoint.should_process_campaign(campaign.campaign_id, self.retry_failed):
+                        # Skip this campaign (already successful)
+                        checkpoint_data = self.checkpoint.get_campaign_data(campaign.campaign_id)
+                        if checkpoint_data and checkpoint_data.get('status') == 'success':
+                            campaign.status = 'skipped'
+                            campaign.ads_created = checkpoint_data.get('ads_created', 0)
+                            logger.info(f"⊘ Skipping campaign {campaign.campaign_id} - already successful "
+                                      f"({campaign.ads_created} ads)")
+                        continue
                 return campaign
         return None
     
@@ -208,6 +233,16 @@ class CampaignManager:
         campaign.status = 'success'
         campaign.ads_created = ads_created
         logger.info(f"✓ Campaign {campaign.campaign_id} ({campaign.campaign_name}): {ads_created} ads created")
+        
+        # Save to checkpoint
+        if self.checkpoint:
+            self.checkpoint.update_campaign(
+                campaign.campaign_id,
+                'success',
+                ads_created=ads_created,
+                campaign_name=campaign.campaign_name,
+                csv_file=campaign.csv_filename
+            )
     
     def mark_failed(self, campaign: Campaign, error: str, invalid_creatives: List[str] = None):
         """Mark campaign as failed."""
@@ -216,12 +251,109 @@ class CampaignManager:
         if invalid_creatives:
             campaign.invalid_creatives = invalid_creatives
         logger.error(f"✗ Campaign {campaign.campaign_id} ({campaign.campaign_name}): {error}")
+        
+        # Save to checkpoint
+        if self.checkpoint:
+            self.checkpoint.update_campaign(
+                campaign.campaign_id,
+                'failed',
+                error=error,
+                campaign_name=campaign.campaign_name,
+                csv_file=campaign.csv_filename,
+                invalid_creatives_count=len(invalid_creatives) if invalid_creatives else 0
+            )
     
     def mark_skipped(self, campaign: Campaign, reason: str):
         """Mark campaign as skipped."""
         campaign.status = 'skipped'
         campaign.error = reason
         logger.warning(f"⊘ Campaign {campaign.campaign_id} ({campaign.campaign_name}): {reason}")
+    
+    def start_tracking(self):
+        """Start progress tracking."""
+        self.start_time = time.time()
+        self.completed_count = 0
+        self.campaign_times.clear()
+    
+    def get_progress_stats(self) -> Dict:
+        """
+        Get current progress statistics.
+        
+        Returns:
+            Dict with: total, completed, remaining, avg_time_per_campaign, eta_seconds, speed_cpm, elapsed
+        """
+        enabled_campaigns = [c for c in self.campaigns if c.enabled]
+        total = len(enabled_campaigns)
+        completed = sum(1 for c in enabled_campaigns if c.status in ['success', 'failed'])
+        remaining = total - completed
+        
+        # Calculate average time per campaign (moving average of last 10)
+        avg_time = sum(self.campaign_times) / len(self.campaign_times) if self.campaign_times else 0
+        
+        # Estimate remaining time
+        eta_seconds = avg_time * remaining if avg_time > 0 else 0
+        
+        # Calculate current upload speed (campaigns per minute)
+        elapsed = time.time() - self.start_time if self.start_time else 0
+        speed_cpm = (completed / elapsed * 60) if elapsed > 0 and completed > 0 else 0
+        
+        return {
+            'total': total,
+            'completed': completed,
+            'remaining': remaining,
+            'avg_time_per_campaign': avg_time,
+            'eta_seconds': eta_seconds,
+            'speed_cpm': speed_cpm,
+            'elapsed': elapsed
+        }
+    
+    def record_campaign_time(self, duration: float):
+        """Record time taken for a campaign."""
+        self.campaign_times.append(duration)
+        self.completed_count += 1
+    
+    def initialize_checkpoint(self, session_id: str, use_existing: bool = True):
+        """
+        Initialize checkpoint for tracking progress.
+        
+        Args:
+            session_id: Unique session identifier
+            use_existing: If True, load existing checkpoint; if False, start fresh
+        """
+        if not self.checkpoint:
+            return
+        
+        # Try to load existing checkpoint
+        if use_existing:
+            loaded = self.checkpoint.load()
+            if loaded:
+                stats = self.checkpoint.get_stats()
+                logger.info(f"📋 Resuming from checkpoint:")
+                logger.info(f"   • {stats['success']} successful")
+                logger.info(f"   • {stats['failed']} failed")
+                logger.info(f"   • {stats['pending']} remaining")
+                return
+        
+        # Initialize new checkpoint
+        campaign_ids = [c.campaign_id for c in self.campaigns if c.enabled]
+        self.checkpoint.initialize_session(session_id, campaign_ids)
+        logger.info(f"📋 Checkpoint initialized - tracking {len(campaign_ids)} campaigns")
+    
+    def set_retry_failed(self, retry: bool):
+        """
+        Set whether to retry failed campaigns.
+        
+        Args:
+            retry: If True, retry previously failed campaigns
+        """
+        self.retry_failed = retry
+        if retry:
+            logger.info("⟳ Will retry previously failed campaigns")
+    
+    def clear_checkpoint(self):
+        """Clear checkpoint file."""
+        if self.checkpoint:
+            self.checkpoint.clear()
     
     def generate_summary_report(self, output_dir: Path) -> Path:
         """

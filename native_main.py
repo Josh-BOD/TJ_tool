@@ -11,6 +11,7 @@ from pathlib import Path
 from datetime import datetime
 
 from playwright.sync_api import sync_playwright
+from tqdm import tqdm
 
 from config import Config
 from src.utils import (
@@ -87,6 +88,15 @@ Examples:
   # Live mode (actual uploads)
   python native_main.py --live
   
+  # Resume from previous interrupted session
+  python native_main.py --live
+  
+  # Start fresh (ignore previous checkpoint)
+  python native_main.py --live --fresh
+  
+  # Retry previously failed campaigns
+  python native_main.py --live --retry-failed
+  
   # Process specific campaigns
   python native_main.py --campaigns 1013017411,1013017412
   
@@ -95,6 +105,11 @@ Examples:
   
   # Headless mode (no browser window)
   python native_main.py --headless
+
+Checkpoint/Resume:
+  By default, the tool saves progress after each campaign. If interrupted,
+  simply run the tool again and it will resume where it left off, skipping
+  campaigns that were already successful.
         """
     )
     
@@ -134,6 +149,18 @@ Examples:
         help='Disable screenshot capture'
     )
     
+    parser.add_argument(
+        '--fresh',
+        action='store_true',
+        help='Start fresh, ignore any existing checkpoint (default: resume from checkpoint)'
+    )
+    
+    parser.add_argument(
+        '--retry-failed',
+        action='store_true',
+        help='Retry previously failed campaigns'
+    )
+    
     return parser.parse_args()
 
 
@@ -143,6 +170,21 @@ def main():
     
     # Parse arguments
     args = parse_arguments()
+    
+    # Check if checkpoint exists (before deleting session)
+    checkpoint_exists = (Config.BASE_DIR / 'data' / 'session' / 'native_upload_checkpoint.json').exists()
+    
+    # Delete old session to force fresh login (but not if resuming from checkpoint)
+    if args.fresh or not checkpoint_exists:
+        try:
+            session_file = Config.BASE_DIR / 'data' / 'session' / 'tj_session.json'
+            if session_file.exists():
+                session_file.unlink()
+                print("🔄 Deleted old session - fresh login required")
+        except Exception as e:
+            print(f"⚠️  Could not delete old session: {e}")
+    else:
+        print("📋 Resuming from checkpoint - keeping existing session")
     
     # Print banner
     print_banner()
@@ -191,9 +233,11 @@ def main():
         logger.warning("native_campaign_mapping.csv not found, using campaign_mapping.csv")
         native_mapping = Config.CSV_INPUT_DIR / 'campaign_mapping.csv'
     
+    checkpoint_file = Config.BASE_DIR / 'data' / 'session' / 'native_upload_checkpoint.json'
     campaign_manager = CampaignManager(
         mapping_file=native_mapping,
-        csv_input_dir=Config.CSV_INPUT_DIR
+        csv_input_dir=Config.CSV_INPUT_DIR,
+        checkpoint_file=checkpoint_file
     )
     
     if not campaign_manager.load_campaigns():
@@ -205,6 +249,20 @@ def main():
         return 1
     
     print_success(f"Loaded {len(campaign_manager.campaigns)} Native campaigns")
+    
+    # Handle checkpoint
+    session_id = f"native_upload_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    
+    if args.fresh:
+        campaign_manager.clear_checkpoint()
+        print_warning("Starting fresh - cleared previous checkpoint")
+    
+    # Initialize checkpoint (will resume if checkpoint exists)
+    campaign_manager.initialize_checkpoint(session_id, use_existing=not args.fresh)
+    
+    # Set retry failed flag
+    if args.retry_failed:
+        campaign_manager.set_retry_failed(True)
     
     # Start browser automation
     logger.info("Starting browser automation...")
@@ -270,99 +328,162 @@ def main():
                 take_screenshots=take_screenshots
             )
             
-            # Process each campaign
-            campaign = campaign_manager.get_next_campaign()
-            while campaign:
-                logger.info(f"\n{'='*60}")
-                logger.info(f"Processing Native campaign: {campaign.campaign_id} ({campaign.campaign_name})")
-                logger.info(f"{'='*60}")
+            # Initialize progress tracking
+            campaign_manager.start_tracking()
+            
+            # Get enabled campaigns for progress bar
+            enabled_campaigns = [c for c in campaign_manager.campaigns if c.enabled]
+            total_campaigns = len(enabled_campaigns)
+            
+            logger.info(f"Starting upload of {total_campaigns} Native campaigns...")
+            
+            # Create progress bar
+            with tqdm(
+                total=total_campaigns,
+                desc="Uploading Native campaigns",
+                unit="campaign",
+                bar_format="{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]",
+                ncols=100
+            ) as pbar:
                 
-                # Get CSV path
-                csv_path = campaign_manager.get_csv_path(campaign)
-                
-                # Validate CSV (Native format)
-                is_valid, errors = NativeCSVProcessor.validate_csv(csv_path)
-                if not is_valid:
-                    error_msg = f"CSV validation failed: {'; '.join(errors)}"
-                    campaign_manager.mark_failed(campaign, error_msg)
-                    campaign = campaign_manager.get_next_campaign()
-                    continue
-                
-                # Navigate to campaign first to get actual campaign name
-                logger.info("Navigating to Native campaign to get actual name from TJ...")
-                if not uploader._navigate_to_campaign(page, campaign.campaign_id):
-                    campaign_manager.mark_failed(campaign, "Failed to navigate to campaign")
-                    campaign = campaign_manager.get_next_campaign()
-                    continue
-                
-                # Get actual campaign name from TrafficJunky page
-                tj_campaign_name = uploader.get_campaign_name_from_page(page)
-                if not tj_campaign_name:
-                    logger.warning("Could not get campaign name from TJ, using mapping name")
-                    tj_campaign_name = campaign.campaign_name
-                
-                # Update campaign object with actual TJ name for reporting
-                campaign.campaign_name = tj_campaign_name
-                
-                # Update URLs with actual TJ campaign name (sub11 parameter)
-                logger.info(f"Updating URLs with TJ campaign name: {tj_campaign_name}")
-                csv_path = NativeCSVProcessor.update_campaign_name_in_urls(csv_path, tj_campaign_name, Config.WIP_DIR)
-                
-                logger.info(f"Updated CSV path: {csv_path}")
-                logger.info(f"Dry run mode: {dry_run}")
-                logger.info("Starting upload to campaign...")
-                
-                # Upload (navigation already done above)
-                result = uploader.upload_to_campaign(
-                    page=page,
-                    campaign_id=campaign.campaign_id,
-                    csv_path=csv_path,
-                    screenshot_dir=Config.SCREENSHOT_DIR,
-                    skip_navigation=True  # We already navigated
-                )
-                
-                # Handle result
-                if result['status'] == 'success':
-                    campaign_manager.mark_success(campaign, result['ads_created'])
-                elif result['status'] == 'dry_run_success':
-                    campaign_manager.mark_success(campaign, 0)
-                elif result.get('invalid_creatives'):
-                    # Handle validation errors - clean CSV and retry
-                    logger.warning("Attempting to clean CSV and retry...")
-                    try:
-                        cleaned_csv, removed_rows = NativeCSVProcessor.remove_invalid_creatives(
-                            csv_path,
-                            result['invalid_creatives']
-                        )
-                        
-                        # Retry with cleaned CSV
-                        result = uploader.upload_to_campaign(
-                            page=page,
-                            campaign_id=campaign.campaign_id,
-                            csv_path=cleaned_csv,
-                            screenshot_dir=Config.SCREENSHOT_DIR
-                        )
-                        
-                        if result['status'] == 'success':
-                            campaign_manager.mark_success(campaign, result['ads_created'])
-                            campaign.invalid_creatives = result.get('invalid_creatives', [])
-                        else:
-                            campaign_manager.mark_failed(
-                                campaign,
-                                result.get('error', 'Unknown error'),
-                                result.get('invalid_creatives', [])
-                            )
-                    except Exception as e:
-                        campaign_manager.mark_failed(campaign, f"Cleanup failed: {e}")
-                else:
-                    campaign_manager.mark_failed(
-                        campaign,
-                        result.get('error', 'Unknown error'),
-                        result.get('invalid_creatives', [])
-                    )
-                
-                # Get next campaign
+                # Process each campaign
                 campaign = campaign_manager.get_next_campaign()
+                while campaign:
+                    campaign_start = time.time()
+                    
+                    # Update progress bar description with current campaign
+                    campaign_display = campaign.campaign_name[:20] if campaign.campaign_name else campaign.campaign_id[:10]
+                    pbar.set_description(f"Processing {campaign_display}")
+                    
+                    logger.info(f"\n{'='*60}")
+                    logger.info(f"Processing Native campaign: {campaign.campaign_id} ({campaign.campaign_name})")
+                    logger.info(f"{'='*60}")
+                    
+                    # Get CSV path
+                    csv_path = campaign_manager.get_csv_path(campaign)
+                    
+                    # Validate CSV (Native format)
+                    is_valid, errors = NativeCSVProcessor.validate_csv(csv_path)
+                    if not is_valid:
+                        error_msg = f"CSV validation failed: {'; '.join(errors)}"
+                        campaign_manager.mark_failed(campaign, error_msg)
+                        
+                        # Record time and update progress
+                        campaign_duration = time.time() - campaign_start
+                        campaign_manager.record_campaign_time(campaign_duration)
+                        stats = campaign_manager.get_progress_stats()
+                        pbar.set_postfix({
+                            'speed': f"{stats['speed_cpm']:.1f} c/m",
+                            'eta': f"{int(stats['eta_seconds']//60)}m {int(stats['eta_seconds']%60)}s" if stats['eta_seconds'] > 0 else "calculating...",
+                            'remaining': stats['remaining']
+                        })
+                        pbar.update(1)
+                        
+                        campaign = campaign_manager.get_next_campaign()
+                        continue
+                    
+                    # Navigate to campaign first to get actual campaign name
+                    logger.info("Navigating to Native campaign to get actual name from TJ...")
+                    if not uploader._navigate_to_campaign(page, campaign.campaign_id):
+                        campaign_manager.mark_failed(campaign, "Failed to navigate to campaign")
+                        
+                        # Record time and update progress
+                        campaign_duration = time.time() - campaign_start
+                        campaign_manager.record_campaign_time(campaign_duration)
+                        stats = campaign_manager.get_progress_stats()
+                        pbar.set_postfix({
+                            'speed': f"{stats['speed_cpm']:.1f} c/m",
+                            'eta': f"{int(stats['eta_seconds']//60)}m {int(stats['eta_seconds']%60)}s" if stats['eta_seconds'] > 0 else "calculating...",
+                            'remaining': stats['remaining']
+                        })
+                        pbar.update(1)
+                        
+                        campaign = campaign_manager.get_next_campaign()
+                        continue
+                    
+                    # Get actual campaign name from TrafficJunky page
+                    tj_campaign_name = uploader.get_campaign_name_from_page(page)
+                    if not tj_campaign_name:
+                        logger.warning("Could not get campaign name from TJ, using mapping name")
+                        tj_campaign_name = campaign.campaign_name
+                    
+                    # Update campaign object with actual TJ name for reporting
+                    campaign.campaign_name = tj_campaign_name
+                    
+                    # Update URLs with actual TJ campaign name (sub11 parameter)
+                    logger.info(f"Updating URLs with TJ campaign name: {tj_campaign_name}")
+                    csv_path = NativeCSVProcessor.update_campaign_name_in_urls(csv_path, tj_campaign_name, Config.WIP_DIR)
+                    
+                    logger.info(f"Updated CSV path: {csv_path}")
+                    logger.info(f"Dry run mode: {dry_run}")
+                    logger.info("Starting upload to campaign...")
+                    
+                    # Upload (navigation already done above)
+                    result = uploader.upload_to_campaign(
+                        page=page,
+                        campaign_id=campaign.campaign_id,
+                        csv_path=csv_path,
+                        screenshot_dir=Config.SCREENSHOT_DIR,
+                        skip_navigation=True  # We already navigated
+                    )
+                    
+                    # Handle result
+                    if result['status'] == 'success':
+                        campaign_manager.mark_success(campaign, result['ads_created'])
+                    elif result['status'] == 'dry_run_success':
+                        campaign_manager.mark_success(campaign, 0)
+                    elif result.get('invalid_creatives'):
+                        # Handle validation errors - clean CSV and retry
+                        logger.warning("Attempting to clean CSV and retry...")
+                        try:
+                            cleaned_csv, removed_rows = NativeCSVProcessor.remove_invalid_creatives(
+                                csv_path,
+                                result['invalid_creatives']
+                            )
+                            
+                            # Retry with cleaned CSV
+                            result = uploader.upload_to_campaign(
+                                page=page,
+                                campaign_id=campaign.campaign_id,
+                                csv_path=cleaned_csv,
+                                screenshot_dir=Config.SCREENSHOT_DIR
+                            )
+                            
+                            if result['status'] == 'success':
+                                campaign_manager.mark_success(campaign, result['ads_created'])
+                                campaign.invalid_creatives = result.get('invalid_creatives', [])
+                            else:
+                                campaign_manager.mark_failed(
+                                    campaign,
+                                    result.get('error', 'Unknown error'),
+                                    result.get('invalid_creatives', [])
+                                )
+                        except Exception as e:
+                            campaign_manager.mark_failed(campaign, f"Cleanup failed: {e}")
+                    else:
+                        campaign_manager.mark_failed(
+                            campaign,
+                            result.get('error', 'Unknown error'),
+                            result.get('invalid_creatives', [])
+                        )
+                    
+                    # Record time and update progress
+                    campaign_duration = time.time() - campaign_start
+                    campaign_manager.record_campaign_time(campaign_duration)
+                    
+                    # Get stats for custom postfix
+                    stats = campaign_manager.get_progress_stats()
+                    
+                    # Update progress bar with ETA
+                    pbar.set_postfix({
+                        'speed': f"{stats['speed_cpm']:.1f} c/m",
+                        'eta': f"{int(stats['eta_seconds']//60)}m {int(stats['eta_seconds']%60)}s" if stats['eta_seconds'] > 0 else "calculating...",
+                        'remaining': stats['remaining']
+                    })
+                    pbar.update(1)
+                    
+                    # Get next campaign
+                    campaign = campaign_manager.get_next_campaign()
             
             # Close browser
             browser.close()
