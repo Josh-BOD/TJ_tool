@@ -255,26 +255,43 @@ class TJAuthenticator:
             except:
                 logger.info("No cookie popup (already dismissed)")
             
-            # Pre-fill credentials
+            # Pre-fill credentials with human-like behavior
             try:
-                logger.info("Pre-filling credentials...")
+                import random
+                
+                logger.info("Pre-filling credentials with human-like behavior...")
                 page.wait_for_selector('input[placeholder*="USERNAME"]', state='visible', timeout=10000)
+                
+                # Random mouse movement before clicking
+                page.mouse.move(random.randint(100, 500), random.randint(100, 300))
+                page.wait_for_timeout(random.randint(200, 500))
                 
                 username_input = page.locator('input[placeholder*="USERNAME"]').first
                 username_input.click()
-                page.wait_for_timeout(300)
-                # Type character-by-character to trigger JavaScript validation
-                username_input.type(self.username, delay=50)
-                page.wait_for_timeout(300)
+                page.wait_for_timeout(random.randint(300, 600))
+                
+                # Use fill() instead of type() - it's faster and might look more like paste
+                # This mimics copy/paste behavior better than typing
+                username_input.fill(self.username)
+                page.wait_for_timeout(random.randint(400, 800))
+                
+                # Random mouse movement
+                page.mouse.move(random.randint(300, 700), random.randint(200, 400))
+                page.wait_for_timeout(random.randint(100, 300))
                 
                 password_input = page.locator('input[type="password"]').first
                 password_input.click()
-                page.wait_for_timeout(300)
-                # Type character-by-character to trigger JavaScript validation
-                password_input.type(self.password, delay=50)
-                page.wait_for_timeout(300)
+                page.wait_for_timeout(random.randint(300, 600))
                 
-                # Click somewhere else to trigger form validation and enable the button
+                # Fill password (like paste)
+                password_input.fill(self.password)
+                page.wait_for_timeout(random.randint(500, 1000))
+                
+                # Random mouse movement before triggering validation
+                page.mouse.move(random.randint(400, 800), random.randint(300, 500))
+                page.wait_for_timeout(random.randint(200, 400))
+                
+                # Click somewhere else to trigger form validation
                 logger.info("Triggering form validation...")
                 try:
                     # Click on the page heading
@@ -283,8 +300,8 @@ class TJAuthenticator:
                     # If that fails, just press Tab
                     page.keyboard.press('Tab')
                 
-                page.wait_for_timeout(1500)
-                logger.info("✓ Credentials filled")
+                page.wait_for_timeout(random.randint(1000, 2000))
+                logger.info("✓ Credentials filled (paste-like behavior)")
             except Exception as e:
                 logger.error(f"Error pre-filling credentials: {e}")
                 logger.exception("Credential fill error:")
