@@ -1,0 +1,71 @@
+
+============================================================
+Campaign URL Updater - One-Time Script
+============================================================
+CSV file: data/input/URL_Update.csv
+Campaigns to process: 1
+============================================================
+
+✓ Browser launched
+2025-11-17 14:16:27 - url_update - INFO - Checking if saved session is still valid...
+✓ Logged in using saved session
+
+============================================================
+Processing Campaigns
+============================================================
+
+
+Campaign 1012927662:
+ℹ   Campaign Name: OLD_CPA_Global_Video-IS_excl._iOS_OTH5
+ℹ Updating URLs for campaign 1012927662...
+ℹ   Setting table to show 100 ads...
+✓   ✓ Set to show 100 ads
+ℹ   Found 7 ads in campaign
+ℹ   Selecting all ads...
+✓   ✓ Selected all 7 ads
+ℹ   Clicking 'Edit Selected URLs'...
+ℹ   Waiting for modal to appear...
+⚠   Modal input not found with first selector: Locator.wait_for: Timeout 10000ms exceeded.
+Call log:
+waiting for locator("input#mass_target_source_url").first to be visible
+  -   locator resolved to hidden <input disabled type="text" maxlength="2038" data-listener="true" placeholder="https://" id="mass_target_source_url" name="mass_target_source_url" class="requiredField form-control form-control-sm target_url d-none" data-ad-type-mass="static video_banner native_static native_rollover native_social"/>
+  -   locator resolved to hidden <input disabled type="text" maxlength="2038" data-listener="true" placeholder="https://" id="mass_target_source_url" name="mass_target_source_url" class="requiredField form-control form-control-sm target_url d-none" data-ad-type-mass="static video_banner native_static native_rollover native_social"/>
+  -   locator resolved to hidden <input disabled type="text" maxlength="2038" data-listener="true" placeholder="https://" id="mass_target_source_url" name="mass_target_source_url" class="requiredField form-control form-control-sm target_url d-none" data-ad-type-mass="static video_banner native_static native_rollover native_social"/>
+  -   locator resolved to hidden <input disabled type="text" maxlength="2038" data-listener="true" placeholder="https://" id="mass_target_source_url" name="mass_target_source_url" class="requiredField form-control form-control-sm target_url d-none" data-ad-type-mass="static video_banner native_static native_rollover native_social"/>
+  -   locator resolved to hidden <input disabled type="text" maxlength="2038" data-listener="true" placeholder="https://" id="mass_target_source_url" name="mass_target_source_url" class="requiredField form-control form-control-sm target_url d-none" data-ad-type-mass="static video_banner native_static native_rollover native_social"/>
+  -   locator resolved to hidden <input disabled type="text" maxlength="2038" data-listener="true" placeholder="https://" id="mass_target_source_url" name="mass_target_source_url" class="requiredField form-control form-control-sm target_url d-none" data-ad-type-mass="static video_banner native_static native_rollover native_social"/>
+  -   locator resolved to hidden <input disabled type="text" maxlength="2038" data-listener="true" placeholder="https://" id="mass_target_source_url" name="mass_target_source_url" class="requiredField form-control form-control-sm target_url d-none" data-ad-type-mass="static video_banner native_static native_rollover native_social"/>
+  -   locator resolved to hidden <input disabled type="text" maxlength="2038" data-listener="true" placeholder="https://" id="mass_target_source_url" name="mass_target_source_url" class="requiredField form-control form-control-sm target_url d-none" data-ad-type-mass="static video_banner native_static native_rollover native_social"/>
+  -   locator resolved to hidden <input disabled type="text" maxlength="2038" data-listener="true" placeholder="https://" id="mass_target_source_url" name="mass_target_source_url" class="requiredField form-control form-control-sm target_url d-none" data-ad-type-mass="static video_banner native_static native_rollover native_social"/>
+  -   locator resolved to hidden <input disabled type="text" maxlength="2038" data-listener="true" placeholder="https://" id="mass_target_source_url" name="mass_target_source_url" class="requiredField form-control form-control-sm target_url d-none" data-ad-type-mass="static video_banner native_static native_rollover native_social"/>
+  -   locator resolved to hidden <input disabled type="text" maxlength="2038" data-listener="true" placeholder="https://" id="mass_target_source_url" name="mass_target_source_url" class="requiredField form-control form-control-sm target_url d-none" data-ad-type-mass="static video_banner native_static native_rollover native_social"/>
+  -   locator resolved to hidden <input disabled type="text" maxlength="2038" data-listener="true" placeholder="https://" id="mass_target_source_url" name="mass_target_source_url" class="requiredField form-control form-control-sm target_url d-none" data-ad-type-mass="static video_banner native_static native_rollover native_social"/>
+  -   locator resolved to hidden <input disabled type="text" maxlength="2038" data-listener="true" placeholder="https://" id="mass_target_source_url" name="mass_target_source_url" class="requiredField form-control form-control-sm target_url d-none" data-ad-type-mass="static video_banner native_static native_rollover native_social"/>
+  -   locator resolved to hidden <input disabled type="text" maxlength="2038" data-listener="true" placeholder="https://" id="mass_target_source_url" name="mass_target_source_url" class="requiredField form-control form-control-sm target_url d-none" data-ad-type-mass="static video_banner native_static native_rollover native_social"/>
+  -   locator resolved to hidden <input disabled type="text" maxlength="2038" data-listener="true" placeholder="https://" id="mass_target_source_url" name="mass_target_source_url" class="requiredField form-control form-control-sm target_url d-none" data-ad-type-mass="static video_banner native_static native_rollover native_social"/>
+  -   locator resolved to hidden <input disabled type="text" maxlength="2038" data-listener="true" placeholder="https://" id="mass_target_source_url" name="mass_target_source_url" class="requiredField form-control form-control-sm target_url d-none" data-ad-type-mass="static video_banner native_static native_rollover native_social"/>
+  -   locator resolved to hidden <input disabled type="text" maxlength="2038" data-listener="true" placeholder="https://" id="mass_target_source_url" name="mass_target_source_url" class="requiredField form-control form-control-sm target_url d-none" data-ad-type-mass="static video_banner native_static native_rollover native_social"/>
+  -   locator resolved to hidden <input disabled type="text" maxlength="2038" data-listener="true" placeholder="https://" id="mass_target_source_url" name="mass_target_source_url" class="requiredField form-control form-control-sm target_url d-none" data-ad-type-mass="static video_banner native_static native_rollover native_social"/>
+  -   locator resolved to hidden <input disabled type="text" maxlength="2038" data-listener="true" placeholder="https://" id="mass_target_source_url" name="mass_target_source_url" class="requiredField form-control form-control-sm target_url d-none" data-ad-type-mass="static video_banner native_static native_rollover native_social"/>
+  -   locator resolved to hidden <input disabled type="text" maxlength="2038" data-listener="true" placeholder="https://" id="mass_target_source_url" name="mass_target_source_url" class="requiredField form-control form-control-sm target_url d-none" data-ad-type-mass="static video_banner native_static native_rollover native_social"/>
+  -   locator resolved to hidden <input disabled type="text" maxlength="2038" data-listener="true" placeholder="https://" id="mass_target_source_url" name="mass_target_source_url" class="requiredField form-control form-control-sm target_url d-none" data-ad-type-mass="static video_banner native_static native_rollover native_social"/>
+  -   locator resolved to hidden <input disabled type="text" maxlength="2038" data-listener="true" placeholder="https://" id="mass_target_source_url" name="mass_target_source_url" class="requiredField form-control form-control-sm target_url d-none" data-ad-type-mass="static video_banner native_static native_rollover native_social"/>
+  -   locator resolved to hidden <input disabled type="text" maxlength="2038" data-listener="true" placeholder="https://" id="mass_target_source_url" name="mass_target_source_url" class="requiredField form-control form-control-sm target_url d-none" data-ad-type-mass="static video_banner native_static native_rollover native_social"/>
+  -   locator resolved to hidden <input disabled type="text" maxlength="2038" data-listener="true" placeholder="https://" id="mass_target_source_url" name="mass_target_source_url" class="requiredField form-control form-control-sm target_url d-none" data-ad-type-mass="static video_banner native_static native_rollover native_social"/>
+  -   locator resolved to hidden <input disabled type="text" maxlength="2038" data-listener="true" placeholder="https://" id="mass_target_source_url" name="mass_target_source_url" class="requiredField form-control form-control-sm target_url d-none" data-ad-type-mass="static video_banner native_static native_rollover native_social"/>
+
+✗   Modal did not appear - input field not found
+ℹ   Screenshot saved to debug_modal_error.png
+✓ 
+Browser closed
+
+============================================================
+SUMMARY
+============================================================
+Total campaigns: 1
+✓ Updated: 0
+✗ Failed: 1
+
+Failed campaigns:
+  ✗ 1012927662: Unknown error
+============================================================

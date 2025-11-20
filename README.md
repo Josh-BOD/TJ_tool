@@ -1,15 +1,23 @@
 # TrafficJunky Automation Tool 🚀
 
-**Automate bulk ad creative uploads to TrafficJunky campaigns** - Tested and working with 400+ campaigns.
+**Comprehensive automation suite for TrafficJunky campaign management** - Tested and working with 400+ campaigns.
 
-## 📌 Two Upload Tools Available
+## 📌 Three Tools Available
 
-### 1. **Preroll/Video Ad Uploader** (`main.py`)
+### 1. **Campaign Creator** (`create_campaigns.py`) 🆕✨
+- **Automated end-to-end campaign creation**
+- Creates Desktop, iOS, and Android campaigns
+- Uploads ads from CSV files
+- Smart cloning (Android from iOS for speed)
+- Progress tracking with checkpoints
+- **See [CAMPAIGN_CREATION_README.md](CAMPAIGN_CREATION_README.md) for full guide**
+
+### 2. **Preroll/Video Ad Uploader** (`main.py`)
 - For Preroll/Video ad campaigns
 - Standard CSV format with 10 columns
 - Includes Custom CTA fields, Banner CTA fields, etc.
 
-### 2. **Native Ad Uploader** (`native_main.py`) 🆕
+### 3. **Native Ad Uploader** (`native_main.py`)
 - For Native ad campaigns
 - Simplified CSV format with 6 columns
 - Video Creative ID + Thumbnail Creative ID + Headline + Brand Name

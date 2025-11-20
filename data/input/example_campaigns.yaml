@@ -1,0 +1,115 @@
+# Example Campaign Definitions - YAML Format
+# 
+# This file demonstrates how to define campaigns for automated creation.
+# Copy this file and modify it with your actual campaign details.
+
+# Global defaults - applied to all campaigns unless overridden
+defaults:
+  geo: ["US"]                      # Default to United States
+  language: "EN"
+  ad_format: "NATIVE"
+  bid_type: "CPA"
+  source: "ALL"
+  target_cpa: 50                   # Default $50
+  per_source_test_budget: 200      # Default $200
+  max_bid: 10                      # Default $10
+  frequency_cap: 2                 # Show ad max 2 times per day
+  max_daily_budget: 250            # Default $250/day
+  gender: "male"                   # "male", "female", or "all"
+  conversion_tracker: "Redtrack - Purchase"
+  include_all_sources: true
+  ad_rotation: "autopilot_ctr"     # "autopilot_ctr", "autopilot_cpa", or "manual"
+  variants: ["desktop", "ios", "android"]  # Which device variants to create
+
+# Campaign definitions
+campaigns:
+  # Campaign 1: Milfs keyword targeting
+  - name: "Milfs"
+    group: "Milfs"                 # Campaign group (will be created if doesn't exist)
+    keywords:
+      - name: "milfs"
+        match_type: "broad"        # "broad" or "exact"
+      - name: "milf porn"
+        match_type: "exact"
+      - name: "cougar"
+        match_type: "exact"
+    csv_file: "Milfs.csv"          # CSV file with ad creatives (in data/input/)
+    settings:
+      target_cpa: 55               # Override default
+      per_source_test_budget: 100  # Override default
+      max_bid: 11
+      frequency_cap: 1             # More aggressive - show once per day
+      max_daily_budget: 275
+    variants: ["desktop", "ios", "android"]  # Create all 3
+    enabled: true                  # Set to false to skip this campaign
+
+  # Campaign 2: Cougars keyword targeting (Australia/New Zealand)
+  - name: "Cougars"
+    group: "Cougars"
+    geo: ["AU", "NZ"]              # Override default geo
+    keywords:
+      - name: "cougar"
+        match_type: "broad"
+      - name: "cougars"
+        match_type: "exact"
+      - name: "mature women"
+        match_type: "exact"
+    csv_file: "Cougars.csv"
+    settings:
+      # Uses defaults for most settings
+      max_daily_budget: 200        # Lower budget for AU/NZ
+    variants: ["desktop", "ios"]   # Only Desktop and iOS, no Android
+    enabled: true
+
+  # Campaign 3: Mature Moms keyword targeting
+  - name: "MatureMoms"
+    group: "Mature"
+    keywords:
+      - name: "mature moms"
+        match_type: "broad"
+      - name: "mom porn"
+        match_type: "exact"
+    csv_file: "MatureMoms.csv"
+    settings:
+      target_cpa: 45               # Lower CPA target
+      frequency_cap: 3             # Show up to 3 times per day
+    variants: ["desktop"]          # Desktop only
+    enabled: true
+
+  # Campaign 4: Stepmom keyword targeting (disabled for now)
+  - name: "Stepmom"
+    group: "Stepmom"
+    keywords:
+      - name: "stepmom"
+        match_type: "broad"
+      - name: "step mom porn"
+        match_type: "exact"
+    csv_file: "Stepmom.csv"
+    variants: ["desktop", "ios", "android"]
+    enabled: false                 # Skip this campaign (testing or not ready)
+
+  # Campaign 5: International - Canada
+  - name: "Milfs-Canada"
+    group: "Milfs"
+    geo: ["CA"]                    # Canada
+    keywords:
+      - name: "milfs"
+        match_type: "broad"
+      - name: "milf porn"
+        match_type: "exact"
+    csv_file: "Milfs-CA.csv"       # Same creatives, different geo
+    settings:
+      target_cpa: 60               # Higher CPA for Canada
+      max_daily_budget: 300
+    variants: ["desktop", "ios", "android"]
+    enabled: true
+
+# Notes:
+# - Keywords are case-insensitive (will be lowercased by TrafficJunky)
+# - Match types: "broad" matches variations, "exact" matches exactly
+# - Geo codes: US, CA, AU, NZ, UK, etc. (ISO 2-letter country codes)
+# - CSV files must exist in data/input/ directory
+# - Group names will be created automatically if they don't exist
+# - Campaign names follow pattern: {geo}_{lang}_{format}_{bid_type}_{source}_KEY-{keyword}_{device}_{gender}_{user}
+#   Example: US_EN_NATIVE_CPA_ALL_KEY-Milfs_DESK_M_JB
+
