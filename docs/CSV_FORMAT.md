@@ -29,6 +29,8 @@ The campaign automation tool uses a CSV file to define campaigns. This guide exp
 | `max_bid` | Maximum bid | `10.0` | `10` |
 | `frequency_cap` | Frequency cap | `2` | `1` |
 | `max_daily_budget` | Maximum daily budget | `250.0` | `250` |
+| `ios_version` | iOS version constraint | All versions | `>18.4` |
+| `android_version` | Android version constraint | All versions | `>11.0` |
 
 ## Features
 
@@ -148,7 +150,25 @@ Cougars,"cougar;cougars",broad,female,US,,cougar_ads.csv,60,150,12,2,300,"deskto
    - `female`
    - `all` (targets both)
 
-4. **Campaign naming**
+4. **OS Version Targeting**
+   - `ios_version`: Target minimum iOS version
+     - Format: `>VERSION` (e.g., `>18.4` means "Newer than 18.4")
+     - Without `>`: Just version number is treated as "Newer than" (e.g., `18.4` = `>18.4`)
+     - Leave empty for all versions
+   - `android_version`: Target minimum Android version
+     - Format: `>VERSION` (e.g., `>11.0` means "Newer than 11.0")
+     - Without `>`: Just version number is treated as "Newer than" (e.g., `11.0` = `>11.0`)
+     - Leave empty for all versions
+   - Examples:
+     ```csv
+     ios_version,android_version
+     >18.4,>11.0        # iOS newer than 18.4, Android newer than 11.0
+     18.4,11.0          # Same as above (> is implied)
+     ,>11.0             # All iOS versions, Android newer than 11.0
+     ,,                 # All versions (no constraints)
+     ```
+
+5. **Campaign naming**
    - Uses format: `{group}-{geo}-{variant}`
    - Example: `Milfs-CA-Desktop`
    - If targeting multiple geos in one campaign: `Milfs-Desktop`

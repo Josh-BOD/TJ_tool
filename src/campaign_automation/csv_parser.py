@@ -61,7 +61,8 @@ from .models import (
     CampaignSettings,
     Keyword,
     MatchType,
-    CampaignBatch
+    CampaignBatch,
+    OSVersion
 )
 
 # Import from parent src directory
@@ -101,7 +102,10 @@ class CSVParser:
         "max_bid": 10.0,
         "frequency_cap": 2,
         "max_daily_budget": 250.0,
-        "gender": "male"  # Options: "male", "female", "all"
+        "gender": "male",  # Options: "male", "female", "all"
+        "ios_version": "",  # iOS version constraint (e.g., ">18.4" or "18.4")
+        "android_version": "",  # Android version constraint (e.g., ">11.0" or "11.0")
+        "ad_format": "NATIVE"  # Options: "NATIVE", "INSTREAM" (default: NATIVE for V1 compatibility)
     }
     
     def __init__(self, csv_path: Path):
@@ -232,7 +236,10 @@ class CSVParser:
                 row.get("max_daily_budget"),
                 DEFAULT_SETTINGS["max_daily_budget"]
             ),
-            gender=row.get("gender", DEFAULT_SETTINGS["gender"]).lower()
+            gender=row.get("gender", DEFAULT_SETTINGS["gender"]).lower(),
+            ios_version=OSVersion.parse(row.get("ios_version", "")),
+            android_version=OSVersion.parse(row.get("android_version", "")),
+            ad_format=row.get("ad_format", DEFAULT_SETTINGS["ad_format"]).upper()  # Parse ad_format from CSV
         )
         
         campaigns = []

@@ -35,14 +35,20 @@ class CampaignCreator:
     
     BASE_URL = "https://advertiser.trafficjunky.com"
     
-    def __init__(self, page: Page):
+    def __init__(self, page: Page, ad_format: str = "NATIVE"):
         """
         Initialize campaign creator.
         
         Args:
             page: Playwright page object (already logged in)
+            ad_format: Ad format - "NATIVE" or "INSTREAM" (default: NATIVE)
         """
         self.page = page
+        self.ad_format = ad_format.upper()
+        
+        # Get templates for this format
+        from campaign_templates import get_templates_for_format
+        self.templates = get_templates_for_format(self.ad_format)
     
     def create_desktop_campaign(
         self,
@@ -62,14 +68,14 @@ class CampaignCreator:
         Raises:
             CampaignCreationError: If creation fails
         """
-        template_id = TEMPLATE_CAMPAIGNS["desktop"]["id"]
+        template_id = self.templates["desktop"]["id"]
         keyword = campaign.primary_keyword
         
         # Generate campaign name
         campaign_name = generate_campaign_name(
             geo=geo,
             language=DEFAULT_SETTINGS["language"],
-            ad_format=DEFAULT_SETTINGS["ad_format"],
+            ad_format=self.ad_format,  # Use the format passed to creator
             bid_type=DEFAULT_SETTINGS["bid_type"],
             source=DEFAULT_SETTINGS["source"],
             keyword=keyword,
@@ -115,13 +121,13 @@ class CampaignCreator:
         Returns:
             Tuple of (campaign_id, campaign_name)
         """
-        template_id = TEMPLATE_CAMPAIGNS["ios"]["id"]
+        template_id = self.templates["ios"]["id"]
         keyword = campaign.primary_keyword
         
         campaign_name = generate_campaign_name(
             geo=geo,
             language=DEFAULT_SETTINGS["language"],
-            ad_format=DEFAULT_SETTINGS["ad_format"],
+            ad_format=self.ad_format,  # Use the format passed to creator
             bid_type=DEFAULT_SETTINGS["bid_type"],
             source=DEFAULT_SETTINGS["source"],
             keyword=keyword,
@@ -137,8 +143,8 @@ class CampaignCreator:
             
             self._configure_basic_settings(campaign_name, campaign.group, campaign.settings.gender)
             self._configure_geo(geo)
-            # Skip OS targeting - iOS is already correctly configured in the iOS template
-            # self._configure_os_targeting(["iOS"])
+            # Configure iOS OS targeting with version constraint
+            self._configure_os_targeting(["iOS"], campaign.settings.ios_version)
             self._configure_keywords(campaign.keywords)
             self._configure_tracking_and_bids(campaign)
             self._configure_schedule_and_budget(campaign)
@@ -173,7 +179,7 @@ class CampaignCreator:
         campaign_name = generate_campaign_name(
             geo=geo,
             language=DEFAULT_SETTINGS["language"],
-            ad_format=DEFAULT_SETTINGS["ad_format"],
+            ad_format=self.ad_format,  # Use the format passed to creator
             bid_type=DEFAULT_SETTINGS["bid_type"],
             source=DEFAULT_SETTINGS["source"],
             keyword=keyword,
@@ -191,8 +197,8 @@ class CampaignCreator:
             # Update name
             self._update_campaign_name(campaign_name)
             
-            # Update OS targeting (remove iOS, add Android)
-            self._configure_os_targeting(["Android"])
+            # Update OS targeting (remove iOS, add Android with version constraint)
+            self._configure_os_targeting(["Android"], campaign.settings.android_version)
             
             # Continue through remaining steps (inherited from iOS)
             self._click_save_and_continue()  # Keywords
@@ -352,8 +358,14 @@ class CampaignCreator:
         self.page.click('button#addLocation')
         time.sleep(0.5)
     
-    def _configure_os_targeting(self, operating_systems: List[str]):
-        """Configure OS targeting."""
+    def _configure_os_targeting(self, operating_systems: List[str], os_version=None):
+        """
+        Configure OS targeting with optional version constraints.
+        
+        Args:
+            operating_systems: List of OS names (e.g., ["iOS"], ["Android"])
+            os_version: OSVersion object with version constraint (optional)
+        """
         # Remove all existing OS first - use "Remove All" button if available
         remove_all_btn = self.page.query_selector('a.removeAll[data-selection="include"]')
         if remove_all_btn:
@@ -381,6 +393,47 @@ class CampaignCreator:
             # Wait for dropdown to appear and click the matching option
             self.page.click(f'li.select2-results__option:has-text("{os_name}")')
             time.sleep(0.3)
+            
+            # Set version constraint if provided
+            if os_version and hasattr(os_version, 'operator'):
+                from .models import VersionOperator
+                if os_version.operator != VersionOperator.ALL and os_version.version:
+                    logger.info(f"Setting version constraint: {os_version}")
+                    
+                    # Click on the version selector to open operator dropdown
+                    # First, need to click the "All Versions" selector
+                    self.page.click('span[id="select2-operating_system_selectors_include-container"]')
+                    time.sleep(0.5)
+                    
+                    # Select the operator based on version constraint
+                    if os_version.operator == VersionOperator.NEWER_THAN:
+                        self.page.click('li.select2-results__option:has-text("Newer than")')
+                    elif os_version.operator == VersionOperator.OLDER_THAN:
+                        self.page.click('li.select2-results__option:has-text("Older than")')
+                    elif os_version.operator == VersionOperator.EQUAL:
+                        self.page.click('li.select2-results__option:has-text("Equal to")')
+                    time.sleep(0.5)
+                    
+                    # Click on the "Select Version" dropdown to open it
+                    # This makes the search input visible
+                    self.page.click('span[id="select2-single_version_include-container"]')
+                    time.sleep(0.5)
+                    
+                    # Now type the version number in the search field that appears
+                    # The search field selector is: input.select2-search__field with aria-controls="select2-single_version_include-results"
+                    search_input = self.page.locator('input.select2-search__field[aria-controls="select2-single_version_include-results"]')
+                    
+                    # Type the version number slowly to trigger the dropdown
+                    search_input.type(os_version.version, delay=100)
+                    time.sleep(0.5)
+                    
+                    # Click on the highlighted option from the dropdown
+                    # Wait for the highlighted option to appear
+                    self.page.wait_for_selector('li.select2-results__option--highlighted', timeout=5000)
+                    self.page.click('li.select2-results__option--highlighted')
+                    time.sleep(0.3)
+                    
+                    logger.info(f"✓ Set version constraint: {os_version}")
             
             # Click Add button
             self.page.click('button.smallButton.greenButton.addOsTarget[data-selection="include"]')

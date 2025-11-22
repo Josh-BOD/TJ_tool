@@ -24,6 +24,49 @@ class MatchType(Enum):
     EXACT = "exact"
 
 
+class VersionOperator(Enum):
+    """OS version operator."""
+    ALL = "all"  # All versions
+    NEWER_THAN = "newer_than"  # Newer than (>)
+    OLDER_THAN = "older_than"  # Older than (<)
+    EQUAL = "equal"  # Equal to (=)
+
+
+@dataclass
+class OSVersion:
+    """OS version constraint."""
+    operator: VersionOperator = VersionOperator.ALL
+    version: Optional[str] = None  # e.g., "18.4", "11.0"
+    
+    def __str__(self) -> str:
+        if self.operator == VersionOperator.ALL:
+            return "All Versions"
+        elif self.operator == VersionOperator.NEWER_THAN:
+            return f">{self.version}"
+        elif self.operator == VersionOperator.OLDER_THAN:
+            return f"<{self.version}"
+        elif self.operator == VersionOperator.EQUAL:
+            return f"={self.version}"
+        return "All Versions"
+    
+    @staticmethod
+    def parse(value: str) -> 'OSVersion':
+        """Parse OS version string like '>18.4' or '11.0'."""
+        if not value or value.lower() in ('all', ''):
+            return OSVersion(VersionOperator.ALL)
+        
+        value = value.strip()
+        if value.startswith('>'):
+            return OSVersion(VersionOperator.NEWER_THAN, value[1:].strip())
+        elif value.startswith('<'):
+            return OSVersion(VersionOperator.OLDER_THAN, value[1:].strip())
+        elif value.startswith('='):
+            return OSVersion(VersionOperator.EQUAL, value[1:].strip())
+        else:
+            # If just a version number, treat as "newer than"
+            return OSVersion(VersionOperator.NEWER_THAN, value)
+
+
 @dataclass
 class Keyword:
     """Keyword with match type."""
@@ -43,6 +86,18 @@ class CampaignSettings:
     frequency_cap: int = 2
     max_daily_budget: float = 250.0
     gender: str = "male"
+    ios_version: Optional[OSVersion] = None  # iOS version constraint
+    android_version: Optional[OSVersion] = None  # Android version constraint
+    ad_format: str = "NATIVE"  # Options: "NATIVE", "INSTREAM"
+    
+    def __post_init__(self):
+        """Initialize version constraints if not set."""
+        if self.ios_version is None:
+            self.ios_version = OSVersion(VersionOperator.ALL)
+        if self.android_version is None:
+            self.android_version = OSVersion(VersionOperator.ALL)
+        # Normalize ad_format to uppercase
+        self.ad_format = self.ad_format.upper()
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
@@ -52,7 +107,10 @@ class CampaignSettings:
             "max_bid": self.max_bid,
             "frequency_cap": self.frequency_cap,
             "max_daily_budget": self.max_daily_budget,
-            "gender": self.gender
+            "gender": self.gender,
+            "ios_version": str(self.ios_version) if self.ios_version else "All Versions",
+            "android_version": str(self.android_version) if self.android_version else "All Versions",
+            "ad_format": self.ad_format
         }
 
 
