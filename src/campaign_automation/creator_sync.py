@@ -294,7 +294,20 @@ class CampaignCreator:
         if no_results:
             # Create new group
             self.page.click('a#showNewGroupFormButton')
-            self.page.fill('input#new_group_name', group_name)
+            
+            # Fill the input and trigger events to enable the button
+            input_field = self.page.locator('input#new_group_name')
+            input_field.fill(group_name)
+            
+            # Trigger input event to enable button
+            input_field.evaluate('(el) => el.dispatchEvent(new Event("input", { bubbles: true }))')
+            
+            # Wait for button to be enabled
+            self.page.wait_for_function(
+                'document.querySelector("button#confirmNewGroupButton").disabled === false',
+                timeout=5000
+            )
+            
             self.page.click('button#confirmNewGroupButton')
             time.sleep(0.5)
         else:
@@ -409,7 +422,19 @@ class CampaignCreator:
             if keyword.match_type == MatchType.BROAD:
                 # Click the label for broad match type
                 # The label wraps the hidden input
-                self.page.click(f'label[for="broad_{keyword.name}"]')
+                # ID attributes convert spaces to underscores or use CSS escape
+                # Try both approaches
+                keyword_id = keyword.name.replace(" ", "_")
+                try:
+                    self.page.click(f'label[for="broad_{keyword_id}"]', timeout=5000)
+                except:
+                    # If that fails, try without replacement (exact match)
+                    try:
+                        # Use XPath for exact text match
+                        label = self.page.locator(f'//label[@for="broad_{keyword.name}"]')
+                        label.click(timeout=5000)
+                    except:
+                        print(f"Warning: Could not set broad match for '{keyword.name}', skipping")
                 time.sleep(0.2)
             # If exact, leave it (it's the default)
         

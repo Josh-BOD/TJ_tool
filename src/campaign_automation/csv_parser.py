@@ -3,6 +3,52 @@ CSV input parser for campaign definitions.
 
 Parses CSV files containing campaign definitions and converts them to
 CampaignDefinition objects.
+
+CSV Format:
+-----------
+
+Required Columns:
+- group: Campaign group name (e.g., "Milfs", "Cougars")
+- keywords: Semicolon-separated list (e.g., "milf;milfs;milf porn")
+- csv_file: Path to ad CSV file
+- variants: Comma-separated device types (e.g., "desktop,ios,android")
+- enabled: TRUE/FALSE to enable/disable this row
+
+Optional Columns:
+- keyword_matches: Only specify "broad" for keywords that need it
+  Examples:
+    - "broad" = first keyword is broad, rest are exact
+    - "broad;broad" = first 2 keywords are broad, rest are exact
+    - "" or omit = all keywords are exact
+- gender: "male", "female", or "all" (default: "male")
+- geo: Semicolon-separated geos for ONE campaign (e.g., "US;CA;UK")
+- multi_geo: Semicolon-separated geos to create SEPARATE campaigns (e.g., "CA;AUS")
+  Note: Use either 'geo' OR 'multi_geo', not both
+- target_cpa: Target CPA (default: 50.0)
+- per_source_budget: Per-source test budget (default: 200.0)
+- max_bid: Maximum bid (default: 10.0)
+- frequency_cap: Frequency cap (default: 2)
+- max_daily_budget: Maximum daily budget (default: 250.0)
+
+Examples:
+---------
+
+1. Create separate campaigns for CA and AUS:
+   group,keywords,keyword_matches,gender,geo,multi_geo,csv_file,...,enabled
+   Milfs,"milf;milfs;mature",broad,,,"CA;AUS",ads.csv,...,TRUE
+   
+   Result: 2 campaigns (Milfs-CA, Milfs-AUS), each with 3 variants
+
+2. Create one campaign targeting multiple geos:
+   group,keywords,keyword_matches,gender,geo,multi_geo,csv_file,...,enabled
+   Milfs,"milf;milfs;mature",broad,female,"US;CA;UK",,ads.csv,...,TRUE
+   
+   Result: 1 campaign (Milfs) targeting US+CA+UK, with 3 variants
+
+3. Mix of broad and exact keywords:
+   keywords: "milf;milfs;milf porn;cougar;older woman"
+   keyword_matches: "broad;broad"
+   Result: First 2 are broad, last 3 are exact
 """
 
 import csv
@@ -40,7 +86,6 @@ class CSVParser:
     REQUIRED_COLUMNS = {
         "group",
         "keywords",
-        "keyword_matches",
         "csv_file",
         "variants",
         "enabled"
@@ -48,13 +93,15 @@ class CSVParser:
     
     # Optional columns with defaults
     OPTIONAL_COLUMNS = {
-        "geo": "US",
+        "geo": "US",  # Single campaign with multiple geos (semicolon-separated, e.g., "US;CA;UK")
+        "multi_geo": "",  # Create separate campaigns per geo (semicolon-separated, e.g., "US;CA;UK")
+        "keyword_matches": "",  # Only specify "broad" for keywords that need it (e.g., "broad;broad" = first 2 broad, rest exact)
         "target_cpa": 50.0,
         "per_source_budget": 200.0,
         "max_bid": 10.0,
         "frequency_cap": 2,
         "max_daily_budget": 250.0,
-        "gender": "male"
+        "gender": "male"  # Options: "male", "female", "all"
     }
     
     def __init__(self, csv_path: Path):
@@ -92,9 +139,9 @@ class CSVParser:
                 # Parse each row
                 for self.row_number, row in enumerate(reader, start=2):  # Start at 2 (after header)
                     try:
-                        campaign = self._parse_row(row)
-                        if campaign:
-                            campaigns.append(campaign)
+                        campaign_list = self._parse_row(row)
+                        if campaign_list:
+                            campaigns.extend(campaign_list)  # Add all campaigns from this row
                     except Exception as e:
                         raise CSVParseError(
                             f"Error parsing row {self.row_number}: {str(e)}"
@@ -133,14 +180,23 @@ class CSVParser:
                 f"Missing required columns: {', '.join(sorted(missing))}"
             )
     
-    def _parse_row(self, row: Dict[str, str]) -> Optional[CampaignDefinition]:
-        """Parse a single CSV row into CampaignDefinition."""
+    def _parse_row(self, row: Dict[str, str]) -> List[CampaignDefinition]:
+        """
+        Parse a single CSV row into one or more CampaignDefinition objects.
+        
+        Two modes:
+        1. If 'multi_geo' is specified: Creates separate campaigns for each geo
+        2. If only 'geo' is specified: Creates a single campaign with those geos
+        
+        Returns:
+            List of CampaignDefinition objects
+        """
         # Normalize keys (strip whitespace, lowercase)
         row = {k.strip().lower(): v.strip() for k, v in row.items()}
         
         # Skip empty rows
         if not any(row.values()):
-            return None
+            return []
         
         # Parse enabled flag
         enabled = self._parse_bool(row.get("enabled", "true"))
@@ -148,11 +204,13 @@ class CSVParser:
         # Parse required fields
         group = self._get_required(row, "group")
         keywords = self._parse_keywords(row)
-        geo = self._parse_geo(row)
         csv_file = self._get_required(row, "csv_file")
         variants = self._parse_variants(row)
         
-        # Parse settings
+        # Check if multi_geo is specified
+        multi_geo_str = row.get("multi_geo", "").strip()
+        
+        # Parse settings (same for all campaigns)
         settings = CampaignSettings(
             target_cpa=self._parse_float(
                 row.get("target_cpa"),
@@ -177,15 +235,40 @@ class CSVParser:
             gender=row.get("gender", DEFAULT_SETTINGS["gender"]).lower()
         )
         
-        return CampaignDefinition(
-            group=group,
-            keywords=keywords,
-            geo=geo,
-            csv_file=csv_file,
-            variants=variants,
-            settings=settings,
-            enabled=enabled
-        )
+        campaigns = []
+        
+        if multi_geo_str:
+            # Mode 1: Create separate campaigns for each geo
+            geo_codes = [g.strip().upper() for g in multi_geo_str.split(";") if g.strip()]
+            if not geo_codes:
+                raise CSVParseError("multi_geo specified but no geo codes provided")
+            
+            for geo_code in geo_codes:
+                campaign = CampaignDefinition(
+                    group=group,
+                    keywords=keywords,
+                    geo=[geo_code],  # Single geo per campaign
+                    csv_file=csv_file,
+                    variants=variants,
+                    settings=settings,
+                    enabled=enabled
+                )
+                campaigns.append(campaign)
+        else:
+            # Mode 2: Single campaign with geos from 'geo' column
+            geo_list = self._parse_geo(row)
+            campaign = CampaignDefinition(
+                group=group,
+                keywords=keywords,
+                geo=geo_list,  # Can be multiple geos in one campaign
+                csv_file=csv_file,
+                variants=variants,
+                settings=settings,
+                enabled=enabled
+            )
+            campaigns.append(campaign)
+        
+        return campaigns
     
     def _get_required(self, row: Dict[str, str], key: str) -> str:
         """Get required field value."""
@@ -195,32 +278,54 @@ class CSVParser:
         return value
     
     def _parse_keywords(self, row: Dict[str, str]) -> List[Keyword]:
-        """Parse keywords and match types."""
-        keywords_str = self._get_required(row, "keywords")
-        matches_str = self._get_required(row, "keyword_matches")
+        """
+        Parse keywords and match types.
         
-        # Split by semicolon
+        Match types are simplified:
+        - Only specify "broad" for keywords that need it
+        - All remaining keywords default to "exact"
+        
+        Examples:
+        - keywords: "milf;milfs;milf porn;cougar;older woman"
+        - keyword_matches: "broad;broad" -> first 2 are broad, rest are exact
+        - keyword_matches: "broad" -> first 1 is broad, rest are exact
+        - keyword_matches: "" or not provided -> all are exact
+        """
+        keywords_str = self._get_required(row, "keywords")
+        matches_str = row.get("keyword_matches", "").strip()
+        
+        # Split keywords by semicolon
         keyword_names = [k.strip() for k in keywords_str.split(";") if k.strip()]
-        match_types = [m.strip().lower() for m in matches_str.split(";") if m.strip()]
         
         if not keyword_names:
             raise CSVParseError("No keywords specified")
         
-        if len(keyword_names) != len(match_types):
-            raise CSVParseError(
-                f"Keywords count ({len(keyword_names)}) doesn't match "
-                f"match types count ({len(match_types)})"
-            )
+        # Split match types by semicolon (only the ones specified as broad)
+        if matches_str:
+            match_types_input = [m.strip().lower() for m in matches_str.split(";") if m.strip()]
+        else:
+            match_types_input = []
         
+        # Build full match types list: specified matches + default to exact for rest
+        match_types = []
+        for i in range(len(keyword_names)):
+            if i < len(match_types_input):
+                # Use specified match type
+                match_type_str = match_types_input[i]
+                if match_type_str not in ("broad", "exact"):
+                    raise CSVParseError(
+                        f"Invalid match type '{match_type_str}' for keyword '{keyword_names[i]}'. "
+                        f"Must be 'broad' or 'exact'"
+                    )
+                match_types.append(match_type_str)
+            else:
+                # Default to exact for remaining keywords
+                match_types.append("exact")
+        
+        # Create keyword objects
         keywords = []
         for name, match in zip(keyword_names, match_types):
-            try:
-                match_type = MatchType(match)
-            except ValueError:
-                raise CSVParseError(
-                    f"Invalid match type '{match}' for keyword '{name}'. "
-                    f"Must be 'broad' or 'exact'"
-                )
+            match_type = MatchType(match)
             keywords.append(Keyword(name=name, match_type=match_type))
         
         return keywords

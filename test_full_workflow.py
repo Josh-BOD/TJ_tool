@@ -40,51 +40,50 @@ def main():
     print(f"→ Parsing CSV: {csv_path}")
     batch = parse_csv(csv_path)
     
-    # Get first enabled campaign
-    test_campaign = None
-    for campaign in batch.campaigns:
-        if campaign.is_enabled and len(campaign.variants) >= 1:
-            test_campaign = campaign
-            break
+    # Get all enabled campaigns
+    test_campaigns = [c for c in batch.campaigns if c.is_enabled and len(c.variants) >= 1]
     
-    if not test_campaign:
+    if not test_campaigns:
         print("✗ No enabled campaigns found in CSV")
         return 1
     
-    print(f"✓ Found test campaign: {test_campaign.group}")
-    print(f"  Keywords: {', '.join(kw.name for kw in test_campaign.keywords)}")
-    print(f"  Variants: {', '.join(test_campaign.variants)}")
-    print(f"  CSV: {test_campaign.csv_file}")
-    print(f"  Geo: {', '.join(test_campaign.geo)}")
+    print(f"✓ Found {len(test_campaigns)} enabled campaign(s)")
+    for campaign in test_campaigns:
+        print(f"  - {campaign.group} ({', '.join(campaign.geo)})")
     
-    csv_file_path = Path("data/input") / test_campaign.csv_file
-    if not csv_file_path.exists():
-        print(f"✗ Ad CSV not found: {csv_file_path}")
-        return 1
+    # Validate all CSV files exist
+    for campaign in test_campaigns:
+        csv_file_path = Path("data/input") / campaign.csv_file
+        if not csv_file_path.exists():
+            print(f"✗ Ad CSV not found: {csv_file_path}")
+            return 1
     
-    print(f"✓ Ad CSV exists: {csv_file_path}")
+    print(f"✓ All ad CSV files exist")
     
-    # Confirm with user
+    # Show what will be created
     print("\n" + "-"*65)
     print("⚠️  THIS WILL CREATE REAL CAMPAIGNS ⚠️")
     print("-"*65)
     print("\nWhat will be created:")
     
-    geo = test_campaign.geo[0]
-    created_campaigns = []
+    all_campaign_names = []
+    for campaign in test_campaigns:
+        for geo in campaign.geo:
+            for variant in campaign.variants:
+                campaign_name = generate_campaign_name(
+                    geo=geo,
+                    language=DEFAULT_SETTINGS["language"],
+                    ad_format=DEFAULT_SETTINGS["ad_format"],
+                    bid_type=DEFAULT_SETTINGS["bid_type"],
+                    source=DEFAULT_SETTINGS["source"],
+                    keyword=campaign.primary_keyword,
+                    device=variant,
+                    gender=campaign.settings.gender
+                )
+                all_campaign_names.append(campaign_name)
+                print(f"  - {campaign_name}")
     
-    for variant in test_campaign.variants:
-        campaign_name = generate_campaign_name(
-            geo=geo,
-            language=DEFAULT_SETTINGS["language"],
-            ad_format=DEFAULT_SETTINGS["ad_format"],
-            bid_type=DEFAULT_SETTINGS["bid_type"],
-            source=DEFAULT_SETTINGS["source"],
-            keyword=test_campaign.primary_keyword,
-            device=variant,
-            gender=test_campaign.settings.gender
-        )
-        print(f"  - {campaign_name}")
+    print(f"\nTotal: {len(all_campaign_names)} campaigns will be created")
     
     # Skip confirmation in non-interactive mode
     if sys.stdin.isatty():
@@ -153,90 +152,114 @@ def main():
             creator = CampaignCreator(page)
             uploader = NativeUploader(dry_run=False, take_screenshots=True)
             
-            ios_campaign_id = None
+            created_campaigns = []
             
-            for variant in test_campaign.variants:
-                print("\n" + "-"*65)
-                print(f"Creating {variant.upper()} campaign...")
-                print("-"*65)
+            # Process each campaign group
+            for campaign in test_campaigns:
+                csv_file_path = Path("data/input") / campaign.csv_file
                 
-                if variant == "desktop":
-                    campaign_id, campaign_name = creator.create_desktop_campaign(
-                        test_campaign, geo
-                    )
-                    print(f"✓ Created Desktop campaign")
-                    print(f"  ID: {campaign_id}")
-                    print(f"  Name: {campaign_name}")
+                # Process each geo
+                for geo in campaign.geo:
+                    print("\n" + "="*65)
+                    print(f"PROCESSING: {campaign.group} - {geo}")
+                    print("="*65)
                     
-                elif variant == "ios":
-                    campaign_id, campaign_name = creator.create_ios_campaign(
-                        test_campaign, geo
-                    )
-                    ios_campaign_id = campaign_id
-                    print(f"✓ Created iOS campaign")
-                    print(f"  ID: {campaign_id}")
-                    print(f"  Name: {campaign_name}")
+                    ios_campaign_id = None
                     
-                elif variant == "android":
-                    if not ios_campaign_id:
-                        print("✗ iOS campaign must be created first!")
-                        continue
-                    
-                    campaign_id, campaign_name = creator.create_android_campaign(
-                        test_campaign, geo, ios_campaign_id
-                    )
-                    print(f"✓ Created Android campaign (cloned from iOS)")
-                    print(f"  ID: {campaign_id}")
-                    print(f"  Name: {campaign_name}")
-                
-                # Update sub11 in CSV with actual campaign name
-                print(f"\n→ Updating sub11 in CSV with campaign name...")
-                updated_csv_path = NativeCSVProcessor.update_campaign_name_in_urls(
-                    csv_file_path, 
-                    campaign_name, 
-                    Config.WIP_DIR
-                )
-                print(f"✓ Updated CSV: {updated_csv_path.name}")
-                
-                # Upload ads
-                print(f"\n→ Uploading ads from {updated_csv_path.name}...")
-                result = uploader.upload_to_campaign(
-                    page,
-                    campaign_id,
-                    updated_csv_path,
-                    skip_navigation=True  # Already on campaign page
-                )
-                
-                if result['status'] == 'success':
-                    print(f"✓ Uploaded {result['ads_created']} ads")
-                else:
-                    print(f"✗ Upload failed: {result.get('error', 'Unknown error')}")
-                
-                # Save campaign
-                print("→ Saving campaign...")
-                save_btn = page.query_selector('button:text("Save Campaign")')
-                if save_btn:
-                    save_btn.click()
-                    page.wait_for_timeout(2000)
-                    print("✓ Campaign saved")
-                
-                created_campaigns.append({
-                    'variant': variant,
-                    'id': campaign_id,
-                    'name': campaign_name,
-                    'ads': result.get('ads_created', 0)
-                })
+                    # Create variants for this geo
+                    for variant in campaign.variants:
+                        print("\n" + "-"*65)
+                        print(f"Creating {variant.upper()} campaign for {geo}...")
+                        print("-"*65)
+                        
+                        if variant == "desktop":
+                            campaign_id, campaign_name = creator.create_desktop_campaign(
+                                campaign, geo
+                            )
+                            print(f"✓ Created Desktop campaign")
+                            print(f"  ID: {campaign_id}")
+                            print(f"  Name: {campaign_name}")
+                            
+                        elif variant == "ios":
+                            campaign_id, campaign_name = creator.create_ios_campaign(
+                                campaign, geo
+                            )
+                            ios_campaign_id = campaign_id
+                            print(f"✓ Created iOS campaign")
+                            print(f"  ID: {campaign_id}")
+                            print(f"  Name: {campaign_name}")
+                            
+                        elif variant == "android":
+                            if not ios_campaign_id:
+                                print("✗ iOS campaign must be created first!")
+                                continue
+                            
+                            campaign_id, campaign_name = creator.create_android_campaign(
+                                campaign, geo, ios_campaign_id
+                            )
+                            print(f"✓ Created Android campaign (cloned from iOS)")
+                            print(f"  ID: {campaign_id}")
+                            print(f"  Name: {campaign_name}")
+                        
+                        # Update sub11 in CSV with actual campaign name
+                        print(f"\n→ Updating sub11 in CSV with campaign name...")
+                        updated_csv_path = NativeCSVProcessor.update_campaign_name_in_urls(
+                            csv_file_path, 
+                            campaign_name, 
+                            Config.WIP_DIR
+                        )
+                        print(f"✓ Updated CSV: {updated_csv_path.name}")
+                        
+                        # Upload ads
+                        print(f"\n→ Uploading ads from {updated_csv_path.name}...")
+                        result = uploader.upload_to_campaign(
+                            page,
+                            campaign_id,
+                            updated_csv_path,
+                            skip_navigation=True  # Already on campaign page
+                        )
+                        
+                        if result['status'] == 'success':
+                            print(f"✓ Uploaded {result['ads_created']} ads")
+                        else:
+                            print(f"✗ Upload failed: {result.get('error', 'Unknown error')}")
+                        
+                        # Save campaign
+                        print("→ Saving campaign...")
+                        save_btn = page.query_selector('button:text("Save Campaign")')
+                        if save_btn:
+                            save_btn.click()
+                            page.wait_for_timeout(2000)
+                            print("✓ Campaign saved")
+                        
+                        created_campaigns.append({
+                            'group': campaign.group,
+                            'geo': geo,
+                            'variant': variant,
+                            'id': campaign_id,
+                            'name': campaign_name,
+                            'ads': result.get('ads_created', 0)
+                        })
             
             # Summary
             print("\n" + "="*65)
             print("✓ CAMPAIGN CREATION COMPLETE")
             print("="*65)
-            print("\nCreated Campaigns:")
+            print(f"\nCreated {len(created_campaigns)} campaigns total:")
+            
+            # Group by geo
+            by_geo = {}
             for camp in created_campaigns:
-                print(f"\n{camp['variant'].upper()}:")
-                print(f"  Name: {camp['name']}")
-                print(f"  ID: {camp['id']}")
-                print(f"  Ads: {camp['ads']}")
+                geo = camp['geo']
+                if geo not in by_geo:
+                    by_geo[geo] = []
+                by_geo[geo].append(camp)
+            
+            for geo, camps in by_geo.items():
+                print(f"\n{geo}:")
+                for camp in camps:
+                    print(f"  {camp['variant'].upper()}: {camp['name']}")
+                    print(f"    ID: {camp['id']}, Ads: {camp['ads']}")
             
             print("\n" + "-"*65)
             print("⚠️  ACTION REQUIRED: PAUSE THESE CAMPAIGNS")

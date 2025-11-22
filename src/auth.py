@@ -235,6 +235,20 @@ class TJAuthenticator:
             True if login detected, False if timeout
         """
         try:
+            # Navigate to advertiser dashboard to check if already logged in via persistent context
+            logger.info("Checking login status...")
+            try:
+                page.goto('https://advertiser.trafficjunky.com/', wait_until='domcontentloaded', timeout=15000)
+                page.wait_for_timeout(2000)
+                
+                # Check if we're logged in (no redirect to sign-in page)
+                if 'sign-in' not in page.url:
+                    logger.info("✓ Already logged in from persistent context!")
+                    return True
+            except Exception as e:
+                # Persistent context might have issues, continue with login
+                logger.info(f"Could not check login status ({e}), proceeding to login...")
+            
             logger.info("="*60)
             logger.info("MANUAL LOGIN REQUIRED")
             logger.info("="*60)
