@@ -2,38 +2,64 @@
 Campaign template configuration and constants.
 
 Contains template campaign IDs, default settings, and naming conventions.
+Supports both NATIVE and INSTREAM ad formats.
 """
 
 from typing import Dict, Any
 
 
-# Template campaign IDs (CONSTANTS - never change)
+# Template campaign IDs by ad format (CONSTANTS - never change)
 TEMPLATE_CAMPAIGNS = {
-    "desktop": {
-        "id": "1013076141",
-        "name": "TEMPLATE_EN_NATIVE_CPA_ALL_KEY-ENTER-Keywords_DESK_M_JB",
-        "device": "desktop"
+    "NATIVE": {
+        "desktop": {
+            "id": "1013076141",
+            "name": "TEMPLATE_EN_NATIVE_CPA_ALL_KEY-ENTER-Keywords_DESK_M_JB",
+            "device": "desktop"
+        },
+        "ios": {
+            "id": "1013076221", 
+            "name": "TEMPLATE_EN_NATIVE_CPA_ALL_KEY-ENTERKEYWORDS_iOS_M_JB",
+            "device": "mobile",
+            "os": "iOS"
+        },
+        # Android clones from iOS campaign, not from template
+        "android": {
+            "clone_from": "ios",
+            "device": "mobile",
+            "os": "Android"
+        }
     },
-    "ios": {
-        "id": "1013076221", 
-        "name": "TEMPLATE_EN_NATIVE_CPA_ALL_KEY-ENTERKEYWORDS_iOS_M_JB",
-        "device": "mobile",
-        "os": "iOS"
-    },
-    # Android clones from iOS campaign, not from template
-    "android": {
-        "clone_from": "ios",
-        "device": "mobile",
-        "os": "Android"
+    "INSTREAM": {
+        "desktop": {
+            "id": "1013076111",
+            "name": "TEMPLATE_EN_INSTREAM_CPA_ALL_KEY-ENTER-Keywords_DESK_M_JB",
+            "device": "desktop"
+        },
+        "ios": {
+            "id": "1013076101",
+            "name": "TEMPLATE_EN_INSTREAM_CPA_ALL_KEY-ENTERKEYWORDS_iOS_M_JB",
+            "device": "mobile",
+            "os": "iOS"
+        },
+        # Android clones from iOS campaign, not from template
+        "android": {
+            "clone_from": "ios",
+            "device": "mobile",
+            "os": "Android"
+        }
     }
 }
+
+# Legacy template campaigns (for backward compatibility with V1)
+# V1 scripts will use this directly
+TEMPLATE_CAMPAIGNS_V1 = TEMPLATE_CAMPAIGNS["NATIVE"]
 
 
 # Default values (can be overridden per campaign)
 DEFAULT_SETTINGS = {
     "geo": ["US"],
     "language": "EN",
-    "ad_format": "NATIVE",
+    "ad_format": "NATIVE",  # V1 default
     "bid_type": "CPA",
     "source": "ALL",
     "target_cpa": 50.0,
@@ -89,8 +115,11 @@ def generate_campaign_name(
     device_map = {"desktop": "DESK", "ios": "iOS", "android": "AND"}
     device_abbr = device_map.get(device.lower(), device.upper())
     
+    # Convert ad_format for campaign name (INSTREAM -> PREROLL)
+    ad_format_name = "PREROLL" if ad_format.upper() == "INSTREAM" else ad_format.upper()
+    
     return (
-        f"{geo}_{language}_{ad_format}_{bid_type}_{source}_"
+        f"{geo}_{language}_{ad_format_name}_{bid_type}_{source}_"
         f"KEY-{keyword_title}_{device_abbr}_{gender_abbr}_{user_initials}"
     )
 
@@ -99,6 +128,7 @@ def generate_campaign_name(
 VALID_DEVICES = ["desktop", "ios", "android"]
 VALID_GENDERS = ["male", "female", "all"]
 VALID_MATCH_TYPES = ["broad", "exact"]
+VALID_AD_FORMATS = ["NATIVE", "INSTREAM"]
 
 # ISO 2-letter country codes (common ones)
 VALID_GEO_CODES = [
@@ -117,4 +147,23 @@ VALID_GEO_CODES = [
 def get_default_settings() -> Dict[str, Any]:
     """Get a copy of default settings."""
     return DEFAULT_SETTINGS.copy()
+
+
+def get_templates_for_format(ad_format: str) -> Dict[str, Any]:
+    """
+    Get template campaigns for a specific ad format.
+    
+    Args:
+        ad_format: "NATIVE" or "INSTREAM"
+        
+    Returns:
+        Dictionary of template campaigns for the format
+        
+    Raises:
+        ValueError: If ad_format is invalid
+    """
+    ad_format = ad_format.upper()
+    if ad_format not in VALID_AD_FORMATS:
+        raise ValueError(f"Invalid ad format: {ad_format}. Must be one of {VALID_AD_FORMATS}")
+    return TEMPLATE_CAMPAIGNS[ad_format]
 

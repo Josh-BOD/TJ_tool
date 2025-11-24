@@ -2,6 +2,8 @@
 
 import logging
 import time
+import csv
+import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from playwright.sync_api import Page, TimeoutError as PlaywrightTimeout
@@ -29,6 +31,7 @@ class NativeUploader:
         page: Page, 
         campaign_id: str, 
         csv_path: Path,
+        campaign_name: Optional[str] = None,
         screenshot_dir: Optional[Path] = None,
         skip_navigation: bool = False
     ) -> Dict:
@@ -87,6 +90,10 @@ class NativeUploader:
                 return result
             
             self._take_screenshot(page, f"02_native_mass_csv_selected", screenshot_dir)
+            
+            # Step 4.5: Update CSV with campaign name if provided
+            if campaign_name:
+                csv_path = self._update_csv_with_campaign_name(csv_path, campaign_name)
             
             # Step 5: Upload CSV
             if self.dry_run:
@@ -458,4 +465,50 @@ class NativeUploader:
             logger.debug(f"Screenshot saved: {filename}")
         except Exception as e:
             logger.debug(f"Screenshot failed: {e}")
+    
+    def _update_csv_with_campaign_name(self, csv_path: Path, campaign_name: str) -> Path:
+        """
+        Update CSV file to replace sub11 parameter with actual campaign name.
+        Creates a temporary CSV file with updated values.
+        
+        Args:
+            csv_path: Original CSV file path
+            campaign_name: Actual campaign name to use
+            
+        Returns:
+            Path to updated temporary CSV file
+        """
+        try:
+            import re
+            
+            # Read original CSV
+            with open(csv_path, 'r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                fieldnames = reader.fieldnames
+                rows = list(reader)
+            
+            # Create temporary file
+            temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False, encoding='utf-8')
+            temp_path = Path(temp_file.name)
+            
+            # Write updated CSV
+            with temp_file:
+                writer = csv.DictWriter(temp_file, fieldnames=fieldnames)
+                writer.writeheader()
+                
+                for row in rows:
+                    # Update Target URL - replace sub11 value with actual campaign name
+                    if 'Target URL' in row and row['Target URL']:
+                        # Replace sub11=<anything> with sub11=<campaign_name>
+                        row['Target URL'] = re.sub(r'sub11=[^&]*', f'sub11={campaign_name}', row['Target URL'])
+                    
+                    writer.writerow(row)
+            
+            logger.info(f"✓ Updated Native CSV with campaign name in sub11: {campaign_name}")
+            return temp_path
+            
+        except Exception as e:
+            logger.warning(f"Failed to update Native CSV with campaign name: {e}")
+            # Return original path if update fails
+            return csv_path
 

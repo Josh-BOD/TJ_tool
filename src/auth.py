@@ -61,36 +61,38 @@ class TJAuthenticator:
             
             logger.info("Filling in credentials...")
             
-            # Fill username
+            # Fill username - type character by character
             username_input = page.locator('input[placeholder*="USERNAME"]').first
             username_input.click()
-            username_input.fill(self.username)
+            page.keyboard.type(self.username, delay=100)
             
-            # Fill password
+            # Fill password - type character by character
             password_input = page.locator('input[type="password"]').first
             password_input.click()
-            password_input.fill(self.password)
+            page.keyboard.type(self.password, delay=100)
             
-            # Wait a moment for the form to enable the button
+            # Click outside the fields to trigger validation
+            page.click('body')
             page.wait_for_timeout(1000)
             
-            # Wait for LOGIN button to be enabled
-            logger.info("Waiting for login button to be enabled...")
-            login_button = page.locator('button:has-text("LOG IN")')
+            # Wait for LOGIN button to be enabled (after reCAPTCHA)
+            logger.info("Waiting for you to solve reCAPTCHA (if needed)...")
+            # Use the exact ID selector ONLY
+            login_button = page.locator('#submitBtn')
             
-            # Check if button is still disabled (might need reCAPTCHA)
+            # Wait up to 2 minutes for reCAPTCHA to be solved and button to be enabled
             try:
-                login_button.wait_for(state='enabled', timeout=5000)
+                login_button.wait_for(state='enabled', timeout=120000)  # 2 minutes
+                logger.info("Login button is enabled!")
             except:
-                logger.warning("Login button still disabled - may need reCAPTCHA")
-                logger.info("Attempting to click anyway...")
+                logger.warning("Login button still disabled - attempting to click anyway...")
             
-            # Click login button
+            # Click login button ONCE
             logger.info("Clicking login button...")
+            login_button.click(timeout=5000)
             
-            # Wait for navigation after login
-            with page.expect_navigation(wait_until='networkidle', timeout=30000):
-                login_button.click(force=True, timeout=5000)
+            # Wait for navigation
+            page.wait_for_load_state('networkidle', timeout=30000)
             
             # Verify login success
             if self._verify_login(page):
