@@ -120,29 +120,41 @@ def dry_run(batch: CampaignBatch, csv_dir: Path):
         print(f"    - Frequency Cap: {campaign.settings.frequency_cap} time(s)/day")
         print(f"    - Max Daily Budget: ${campaign.settings.max_daily_budget}")
         print(f"    - Gender: {campaign.settings.gender}")
+        if campaign.mobile_combined:
+            print(f"    - Mobile Combined: YES (iOS + Android in same campaign)")
         
-        print(f"\n  Will create {len(campaign.variants)} campaign(s):")
+        # Count actual campaigns to create (skip Android if mobile_combined)
+        actual_variants = [v for v in campaign.variants if not (campaign.mobile_combined and v == "android")]
+        print(f"\n  Will create {len(actual_variants)} campaign(s):")
         
         for variant in campaign.variants:
+            # Skip Android if mobile_combined
+            if campaign.mobile_combined and variant == "android":
+                continue
+                
             geo = campaign.geo[0] if campaign.geo else "US"
             keyword = campaign.primary_keyword
             
             campaign_name = generate_campaign_name(
                 geo=geo,
                 language=DEFAULT_SETTINGS["language"],
-                ad_format=DEFAULT_SETTINGS["ad_format"],
+                ad_format=campaign.settings.ad_format,  # Use campaign's ad_format
                 bid_type=DEFAULT_SETTINGS["bid_type"],
                 source=DEFAULT_SETTINGS["source"],
                 keyword=keyword,
                 device=variant,
-                gender=campaign.settings.gender
+                gender=campaign.settings.gender,
+                mobile_combined=campaign.mobile_combined
             )
             
             template_info = ""
             if variant == "desktop":
                 template_info = "Clone from Desktop template (1013076141)"
             elif variant == "ios":
-                template_info = "Clone from iOS template (1013076221)"
+                if campaign.mobile_combined:
+                    template_info = "Clone from iOS template (1013076221) - Targets iOS + Android"
+                else:
+                    template_info = "Clone from iOS template (1013076221)"
             elif variant == "android":
                 template_info = "Clone from iOS campaign (created above)"
             
@@ -162,7 +174,7 @@ def dry_run(batch: CampaignBatch, csv_dir: Path):
     
     print(f"\nTotal campaigns that would be created: {total_variants}")
     
-    # Count by variant type
+    # Count by variant type (skip Android if mobile_combined)
     desktop_count = sum(
         1 for c in batch.enabled_campaigns 
         for v in c.variants if v == "desktop"
@@ -173,12 +185,17 @@ def dry_run(batch: CampaignBatch, csv_dir: Path):
     )
     android_count = sum(
         1 for c in batch.enabled_campaigns 
-        for v in c.variants if v == "android"
+        for v in c.variants if v == "android" and not c.mobile_combined
+    )
+    mobile_combined_count = sum(
+        1 for c in batch.enabled_campaigns if c.mobile_combined
     )
     
     print(f"  - Desktop campaigns: {desktop_count}")
     print(f"  - iOS campaigns: {ios_count}")
     print(f"  - Android campaigns: {android_count}")
+    if mobile_combined_count > 0:
+        print(f"  - Mobile Combined (iOS+Android): {mobile_combined_count}")
     
     # Time estimate
     desktop_time = desktop_count * 5

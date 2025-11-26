@@ -441,6 +441,7 @@ class TJUploader:
     def _update_csv_with_campaign_name(self, csv_path: Path, campaign_name: str) -> Path:
         """
         Update CSV file to replace sub11 parameter with actual campaign name.
+        Also truncates ad names to 64 characters (TrafficJunky limit).
         Creates a temporary CSV file with updated values.
         
         Args:
@@ -469,6 +470,28 @@ class TJUploader:
                 writer.writeheader()
                 
                 for row in rows:
+                    # Truncate Ad Name to 64 characters (TrafficJunky limit)
+                    # Keep the ID at the end (format: ID-XXXXXXXX-VID)
+                    if 'Ad Name' in row and row['Ad Name']:
+                        ad_name = row['Ad Name']
+                        if len(ad_name) > 64:
+                            # Try to extract ID pattern (ID-XXXXXXXX-VID or similar)
+                            # Match alphanumeric ID with format: ID-<alphanumeric>-<letters>
+                            id_match = re.search(r'(ID-[A-Za-z0-9]+-[A-Z]+)$', ad_name)
+                            if id_match:
+                                id_part = id_match.group(1)
+                                # Truncate the beginning but keep the ID
+                                max_prefix_len = 64 - len(id_part) - 1  # -1 for underscore
+                                prefix = ad_name[:max_prefix_len]
+                                row['Ad Name'] = f"{prefix}_{id_part}"
+                                logger.info(f"Truncated ad name from {len(ad_name)} to 64 chars (kept ID): {row['Ad Name']}")
+                            else:
+                                # No ID pattern found, just truncate
+                                row['Ad Name'] = ad_name[:64]
+                                logger.info(f"Truncated ad name to 64 chars (no ID pattern): {row['Ad Name']}")
+                        else:
+                            logger.debug(f"Ad name OK ({len(ad_name)} chars): {ad_name}")
+                    
                     # Update Target URL - replace sub11 value with actual campaign name
                     if 'Target URL' in row and row['Target URL']:
                         # Replace sub11=<anything> with sub11=<campaign_name>

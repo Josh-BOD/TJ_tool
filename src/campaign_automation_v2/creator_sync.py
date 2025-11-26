@@ -60,7 +60,7 @@ class CampaignCreator:
         
         Args:
             campaign: Campaign definition
-            geo: Geo code (e.g., "US")
+            geo: Geo code (e.g., "US") or first geo if multiple
             
         Returns:
             Tuple of (campaign_id, campaign_name)
@@ -71,16 +71,17 @@ class CampaignCreator:
         template_id = self.templates["desktop"]["id"]
         keyword = campaign.primary_keyword
         
-        # Generate campaign name
+        # Generate campaign name with all geos
         campaign_name = generate_campaign_name(
-            geo=geo,
+            geo=campaign.geo,  # Pass full geo list for multi-geo naming
             language=DEFAULT_SETTINGS["language"],
             ad_format=self.ad_format,  # Use the format passed to creator
             bid_type=DEFAULT_SETTINGS["bid_type"],
             source=DEFAULT_SETTINGS["source"],
             keyword=keyword,
             device="desktop",
-            gender=campaign.settings.gender
+            gender=campaign.settings.gender,
+            test_number=campaign.test_number
         )
         
         try:
@@ -93,7 +94,7 @@ class CampaignCreator:
             
             # Configure campaign
             self._configure_basic_settings(campaign_name, campaign.group, campaign.settings.gender)
-            self._configure_geo(geo)
+            self._configure_geo(campaign.geo)  # Pass full geo list
             self._configure_keywords(campaign.keywords)
             self._configure_tracking_and_bids(campaign)
             self._configure_schedule_and_budget(campaign)
@@ -125,14 +126,16 @@ class CampaignCreator:
         keyword = campaign.primary_keyword
         
         campaign_name = generate_campaign_name(
-            geo=geo,
+            geo=campaign.geo,  # Pass full geo list for multi-geo naming
             language=DEFAULT_SETTINGS["language"],
             ad_format=self.ad_format,  # Use the format passed to creator
             bid_type=DEFAULT_SETTINGS["bid_type"],
             source=DEFAULT_SETTINGS["source"],
             keyword=keyword,
             device="ios",
-            gender=campaign.settings.gender
+            gender=campaign.settings.gender,
+            mobile_combined=campaign.mobile_combined,
+            test_number=campaign.test_number
         )
         
         try:
@@ -142,9 +145,19 @@ class CampaignCreator:
             campaign_id = self._clone_campaign(template_id)
             
             self._configure_basic_settings(campaign_name, campaign.group, campaign.settings.gender)
-            self._configure_geo(geo)
-            # Configure iOS OS targeting with version constraint
-            self._configure_os_targeting(["iOS"], campaign.settings.ios_version)
+            self._configure_geo(campaign.geo)  # Pass full geo list
+            
+            # If mobile_combined, configure both iOS and Android OS targeting
+            if campaign.mobile_combined:
+                self._configure_os_targeting(
+                    ["iOS", "Android"],
+                    campaign.settings.ios_version,
+                    campaign.settings.android_version
+                )
+            else:
+                # Configure iOS OS targeting with version constraint only
+                self._configure_os_targeting(["iOS"], campaign.settings.ios_version)
+            
             self._configure_keywords(campaign.keywords)
             self._configure_tracking_and_bids(campaign)
             self._configure_schedule_and_budget(campaign)
@@ -177,14 +190,16 @@ class CampaignCreator:
         keyword = campaign.primary_keyword
         
         campaign_name = generate_campaign_name(
-            geo=geo,
+            geo=campaign.geo,  # Pass full geo list for multi-geo naming
             language=DEFAULT_SETTINGS["language"],
             ad_format=self.ad_format,  # Use the format passed to creator
             bid_type=DEFAULT_SETTINGS["bid_type"],
             source=DEFAULT_SETTINGS["source"],
             keyword=keyword,
             device="android",
-            gender=campaign.settings.gender
+            gender=campaign.settings.gender,
+            mobile_combined=campaign.mobile_combined,
+            test_number=campaign.test_number
         )
         
         try:
@@ -198,7 +213,7 @@ class CampaignCreator:
             self._update_campaign_name(campaign_name)
             
             # Update OS targeting (remove iOS, add Android with version constraint)
-            self._configure_os_targeting(["Android"], campaign.settings.android_version)
+            self._configure_os_targeting(["Android"], android_version=campaign.settings.android_version)
             
             # Continue through remaining steps (inherited from iOS)
             self._click_save_and_continue()  # Keywords
@@ -349,38 +364,46 @@ class CampaignCreator:
         # Click the label instead of the input (label wraps the input)
         self.page.click(f'label:has(input#{gender_id})')
     
-    def _configure_geo(self, geo: str):
-        """Configure geo targeting (Step 2)."""
+    def _configure_geo(self, geo_list: List[str]):
+        """
+        Configure geo targeting (Step 2).
+        
+        Args:
+            geo_list: List of country codes (e.g., ["US", "CA"])
+        """
         # Remove existing geo if needed
         remove_link = self.page.query_selector('a.removeTargetedLocation')
         if remove_link:
             remove_link.click()
             time.sleep(0.5)
         
-        # Click to open the country dropdown
-        self.page.click('span[id="select2-geo_country-container"]')
-        time.sleep(0.5)
-        
-        # Type country name in the search field
-        search_input = self.page.locator('input.select2-search__field[placeholder="Type here to search"]')
-        search_input.fill(geo)
-        time.sleep(0.5)
-        
-        # Click the first result
-        self.page.click('li.select2-results__option')
-        time.sleep(0.5)
-        
-        # Click Add button
-        self.page.click('button#addLocation')
-        time.sleep(0.5)
+        # Add each geo
+        for geo in geo_list:
+            # Click to open the country dropdown
+            self.page.click('span[id="select2-geo_country-container"]')
+            time.sleep(0.5)
+            
+            # Type country name in the search field
+            search_input = self.page.locator('input.select2-search__field[placeholder="Type here to search"]')
+            search_input.fill(geo)
+            time.sleep(0.5)
+            
+            # Click the first result
+            self.page.click('li.select2-results__option')
+            time.sleep(0.5)
+            
+            # Click Add button
+            self.page.click('button#addLocation')
+            time.sleep(0.5)
     
-    def _configure_os_targeting(self, operating_systems: List[str], os_version=None):
+    def _configure_os_targeting(self, operating_systems: List[str], ios_version=None, android_version=None):
         """
         Configure OS targeting with optional version constraints.
         
         Args:
-            operating_systems: List of OS names (e.g., ["iOS"], ["Android"])
-            os_version: OSVersion object with version constraint (optional)
+            operating_systems: List of OS names (e.g., ["iOS"], ["Android"], or ["iOS", "Android"])
+            ios_version: OSVersion object with iOS version constraint (optional)
+            android_version: OSVersion object with Android version constraint (optional)
         """
         # Remove all existing OS first - use "Remove All" button if available
         remove_all_btn = self.page.query_selector('a.removeAll[data-selection="include"]')
@@ -397,9 +420,16 @@ class CampaignCreator:
                 remove_btn.click()
                 time.sleep(0.3)
         
-        # Add each OS
+        # Add each OS with its respective version constraint
         for os_name in operating_systems:
             logger.info(f"Adding OS: {os_name}")
+            
+            # Determine which version constraint to use for this OS
+            os_version = None
+            if os_name == "iOS" and ios_version:
+                os_version = ios_version
+            elif os_name == "Android" and android_version:
+                os_version = android_version
             
             # Click to open OS dropdown
             self.page.click('span[id="select2-operating_systems_list_include-container"]')
@@ -410,11 +440,11 @@ class CampaignCreator:
             self.page.click(f'li.select2-results__option:has-text("{os_name}")')
             time.sleep(0.3)
             
-            # Set version constraint if provided
+            # Set version constraint if provided for this OS
             if os_version and hasattr(os_version, 'operator'):
                 from .models import VersionOperator
                 if os_version.operator != VersionOperator.ALL and os_version.version:
-                    logger.info(f"Setting version constraint: {os_version}")
+                    logger.info(f"Setting version constraint for {os_name}: {os_version}")
                     
                     # Click on the version selector to open operator dropdown
                     # First, need to click the "All Versions" selector
@@ -449,7 +479,7 @@ class CampaignCreator:
                     self.page.click('li.select2-results__option--highlighted')
                     time.sleep(0.3)
                     
-                    logger.info(f"✓ Set version constraint: {os_version}")
+                    logger.info(f"✓ Set version constraint for {os_name}: {os_version}")
             
             # Click Add button
             self.page.click('button.smallButton.greenButton.addOsTarget[data-selection="include"]')

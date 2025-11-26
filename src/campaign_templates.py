@@ -76,6 +76,9 @@ DEFAULT_SETTINGS = {
 
 # Campaign naming convention pattern
 # Example: US_EN_NATIVE_CPA_ALL_KEY-Milfs_DESK_M_JB
+# Example (all mobile): US_EN_NATIVE_CPA_ALL_KEY-Milfs_MOB_ALL_M_JB
+# Example (multi-geo): US-CA_EN_NATIVE_CPA_ALL_KEY-Milfs_MOB_ALL_M_JB
+# Example (with test number): US_EN_NATIVE_CPA_ALL_KEY-Milfs_MOB_ALL_M_JB_T-12
 def generate_campaign_name(
     geo: str,
     language: str,
@@ -85,13 +88,15 @@ def generate_campaign_name(
     keyword: str,
     device: str,
     gender: str,
-    user_initials: str = "JB"
+    user_initials: str = "JB",
+    mobile_combined: bool = False,
+    test_number: str = None
 ) -> str:
     """
     Generate campaign name following TrafficJunky naming convention.
     
     Args:
-        geo: Country code (e.g., "US", "CA")
+        geo: Country code or codes (e.g., "US", "CA", or list like ["US", "CA"])
         language: Language code (e.g., "EN")
         ad_format: Ad format (e.g., "NATIVE")
         bid_type: Bidding type (e.g., "CPA", "CPM")
@@ -100,10 +105,18 @@ def generate_campaign_name(
         device: Device type (e.g., "DESK", "iOS", "AND")
         gender: Target gender ("M", "F", "ALL")
         user_initials: User initials (default: "JB")
+        mobile_combined: If True, use "MOB_ALL" for mobile campaigns (default: False)
+        test_number: Test number/label (e.g., "12", "12A", "V2") - adds "_T-{number}" suffix
     
     Returns:
         Campaign name string
     """
+    # Handle geo as list or string
+    if isinstance(geo, list):
+        geo_str = "-".join(geo)  # Join multiple geos with dash
+    else:
+        geo_str = geo
+    
     # Capitalize keyword for name
     keyword_title = keyword.title().replace(" ", "")
     
@@ -112,16 +125,27 @@ def generate_campaign_name(
     gender_abbr = gender_map.get(gender.lower(), "M")
     
     # Convert device to abbreviation
-    device_map = {"desktop": "DESK", "ios": "iOS", "android": "AND"}
-    device_abbr = device_map.get(device.lower(), device.upper())
+    # If mobile_combined is True and device is mobile, use MOB_ALL
+    if mobile_combined and device.lower() in ("ios", "android"):
+        device_abbr = "MOB_ALL"
+    else:
+        device_map = {"desktop": "DESK", "ios": "iOS", "android": "AND"}
+        device_abbr = device_map.get(device.lower(), device.upper())
     
     # Convert ad_format for campaign name (INSTREAM -> PREROLL)
     ad_format_name = "PREROLL" if ad_format.upper() == "INSTREAM" else ad_format.upper()
     
-    return (
-        f"{geo}_{language}_{ad_format_name}_{bid_type}_{source}_"
+    # Build base name
+    base_name = (
+        f"{geo_str}_{language}_{ad_format_name}_{bid_type}_{source}_"
         f"KEY-{keyword_title}_{device_abbr}_{gender_abbr}_{user_initials}"
     )
+    
+    # Add test number suffix if provided
+    if test_number:
+        return f"{base_name}_T-{test_number}"
+    else:
+        return base_name
 
 
 # Valid values for validation

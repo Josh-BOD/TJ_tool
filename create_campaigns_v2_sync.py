@@ -20,7 +20,7 @@ from native_uploader import NativeUploader
 from uploader import TJUploader
 
 def main():
-    input_file = Path("data/input/ExoCampaignUpload_V2.csv")
+    input_file = Path("data/input/Niche-Stepmom_v2.csv")
     
     print("="*65)
     print("CAMPAIGN CREATION V2 - SYNC VERSION")
@@ -40,8 +40,8 @@ def main():
         
         # Auto login with credentials (gives you time for reCAPTCHA)
         authenticator = TJAuthenticator(Config.TJ_USERNAME, Config.TJ_PASSWORD)
-        print("Logging in (solve reCAPTCHA if needed)...")
-        if not authenticator.login(page):
+        print("Logging in (solve reCAPTCHA manually)...")
+        if not authenticator.manual_login(page, timeout=180):  # 3 minutes to solve CAPTCHA
             print("✗ Login failed!")
             browser.close()
             return 1
@@ -81,6 +81,11 @@ def main():
                 
                 for variant in campaign.variants:
                     try:
+                        # If mobile_combined is True, skip Android variant (it's handled in iOS campaign)
+                        if campaign.mobile_combined and variant == "android":
+                            print(f"  ⓘ Skipping Android variant - already included in iOS campaign (all mobile)")
+                            continue
+                        
                         if variant == "desktop":
                             campaign_id, campaign_name = creator.create_desktop_campaign(campaign, geo)
                             

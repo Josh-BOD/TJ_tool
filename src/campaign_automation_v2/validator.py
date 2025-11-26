@@ -192,19 +192,24 @@ class CampaignValidator:
                 continue
             
             for variant in campaign.variants:
+                # Skip Android variant if mobile_combined - it's not created separately
+                if campaign.mobile_combined and variant == "android":
+                    continue
+                
                 # Generate what the campaign name would be
-                geo = campaign.geo[0] if campaign.geo else "US"
                 keyword = campaign.primary_keyword
                 
                 name = generate_campaign_name(
-                    geo=geo,
+                    geo=campaign.geo,  # Pass full geo list for multi-geo naming
                     language=DEFAULT_SETTINGS["language"],
-                    ad_format=DEFAULT_SETTINGS["ad_format"],
+                    ad_format=campaign.settings.ad_format,  # Use campaign's ad_format
                     bid_type=DEFAULT_SETTINGS["bid_type"],
                     source=DEFAULT_SETTINGS["source"],
                     keyword=keyword,
                     device=variant,
-                    gender=campaign.settings.gender
+                    gender=campaign.settings.gender,
+                    mobile_combined=campaign.mobile_combined,
+                    test_number=campaign.test_number
                 )
                 
                 if name in seen_names:

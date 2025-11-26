@@ -105,7 +105,8 @@ class CSVParser:
         "gender": "male",  # Options: "male", "female", "all"
         "ios_version": "",  # iOS version constraint (e.g., ">18.4" or "18.4")
         "android_version": "",  # Android version constraint (e.g., ">11.0" or "11.0")
-        "ad_format": "NATIVE"  # Options: "NATIVE", "INSTREAM" (default: NATIVE for V1 compatibility)
+        "ad_format": "NATIVE",  # Options: "NATIVE", "INSTREAM" (default: NATIVE for V1 compatibility)
+        "t": ""  # Test number (e.g., "12" becomes "_T-12" in campaign name)
     }
     
     def __init__(self, csv_path: Path):
@@ -242,7 +243,29 @@ class CSVParser:
             ad_format=row.get("ad_format", DEFAULT_SETTINGS["ad_format"]).upper()  # Parse ad_format from CSV
         )
         
+        # Parse test number (can be numeric or alphanumeric like "12", "12A", "V2", etc.)
+        test_number = row.get("t", "").strip()
+        if not test_number:
+            test_number = None
+        
         campaigns = []
+        
+        # Check if "all mobile" variant is used
+        mobile_combined = "all mobile" in variants
+        
+        # Expand "all mobile" to actual variants for processing
+        expanded_variants = []
+        for variant in variants:
+            if variant == "all mobile":
+                # Don't add "all mobile" itself - it's just a marker
+                # We'll create one combined campaign with both iOS and Android
+                if "ios" not in expanded_variants:
+                    expanded_variants.append("ios")
+                if "android" not in expanded_variants:
+                    expanded_variants.append("android")
+            else:
+                if variant not in expanded_variants:
+                    expanded_variants.append(variant)
         
         if multi_geo_str:
             # Mode 1: Create separate campaigns for each geo
@@ -261,9 +284,11 @@ class CSVParser:
                     keywords=keywords,
                     geo=[geo_code],  # Single geo per campaign
                     csv_file=csv_file,
-                    variants=variants,
+                    variants=expanded_variants,
                     settings=settings,
-                    enabled=enabled
+                    enabled=enabled,
+                    mobile_combined=mobile_combined,
+                    test_number=test_number
                 )
                 campaigns.append(campaign)
         else:
@@ -274,9 +299,11 @@ class CSVParser:
                 keywords=keywords,
                 geo=geo_list,  # Can be multiple geos in one campaign
                 csv_file=csv_file,
-                variants=variants,
+                variants=expanded_variants,
                 settings=settings,
-                enabled=enabled
+                enabled=enabled,
+                mobile_combined=mobile_combined,
+                test_number=test_number
             )
             campaigns.append(campaign)
         
@@ -343,13 +370,17 @@ class CSVParser:
         return keywords
     
     def _parse_geo(self, row: Dict[str, str]) -> List[str]:
-        """Parse geo country codes."""
+        """Parse geo country codes. Supports both comma and semicolon separators."""
         geo_str = row.get("geo", "US").strip()
         if not geo_str:
             geo_str = "US"
         
-        # Split by semicolon and uppercase
-        geo_codes = [g.strip().upper() for g in geo_str.split(";") if g.strip()]
+        # Split by comma or semicolon and uppercase
+        # Check which separator is used
+        if "," in geo_str:
+            geo_codes = [g.strip().upper() for g in geo_str.split(",") if g.strip()]
+        else:
+            geo_codes = [g.strip().upper() for g in geo_str.split(";") if g.strip()]
         
         if not geo_codes:
             geo_codes = ["US"]
@@ -357,7 +388,16 @@ class CSVParser:
         return geo_codes
     
     def _parse_variants(self, row: Dict[str, str]) -> List[str]:
-        """Parse device variants."""
+        """
+        Parse device variants.
+        
+        Supports:
+        - "desktop", "ios", "android"
+        - "all mobile" - expands to ["ios", "android"] with mobile_combined flag
+        
+        The "all mobile" variant is used to create campaigns with both iOS and Android
+        targeting in a single campaign (naming will use MOB_ALL instead of iOS/AND).
+        """
         variants_str = self._get_required(row, "variants")
         
         # Split by comma and lowercase
@@ -366,16 +406,22 @@ class CSVParser:
         if not variants:
             raise CSVParseError("No variants specified")
         
-        # Validate variant names
-        valid_variants = {"desktop", "ios", "android"}
+        # Validate variant names and expand "all mobile"
+        valid_variants = {"desktop", "ios", "android", "all mobile"}
+        expanded_variants = []
+        
         for variant in variants:
             if variant not in valid_variants:
                 raise CSVParseError(
                     f"Invalid variant '{variant}'. "
-                    f"Must be one of: desktop, ios, android"
+                    f"Must be one of: desktop, ios, android, all mobile"
                 )
+            
+            # "all mobile" is handled differently - mark for special processing
+            # It will be expanded later when we know this campaign needs mobile_combined
+            expanded_variants.append(variant)
         
-        return variants
+        return expanded_variants
     
     def _parse_bool(self, value: str) -> bool:
         """Parse boolean value."""

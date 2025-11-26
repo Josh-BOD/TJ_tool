@@ -145,9 +145,11 @@ class CampaignDefinition:
     keywords: List[Keyword]
     geo: List[str]
     csv_file: str
-    variants: List[str]  # ["desktop", "ios", "android"]
+    variants: List[str]  # ["desktop", "ios", "android"] or ["desktop", "all mobile"]
     settings: CampaignSettings
     enabled: bool = True
+    mobile_combined: bool = False  # True when using "all mobile" variant (iOS + Android in same campaign)
+    test_number: Optional[str] = None  # Test number for naming (e.g., "12" becomes "_T-12")
     
     # Status tracking
     status: CampaignStatus = CampaignStatus.PENDING
@@ -220,6 +222,8 @@ class CampaignDefinition:
             "variants": self.variants,
             "settings": self.settings.to_dict(),
             "enabled": self.enabled,
+            "mobile_combined": self.mobile_combined,
+            "test_number": self.test_number,
             "status": self.status.value,
             "variant_statuses": {
                 variant: vs.to_dict()
