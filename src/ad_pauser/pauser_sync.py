@@ -206,8 +206,19 @@ class AdPauser:
         """Navigate to URL with retry logic."""
         for attempt in range(self.retry_attempts):
             try:
-                self.page.goto(url, wait_until='networkidle', timeout=30000)
-                self.page.wait_for_timeout(1000)  # Extra settling time
+                logger.info(f"Navigating to: {url}")
+                
+                # Dismiss any popups first
+                self._dismiss_pendo_popup()
+                
+                # Navigate with a more lenient wait condition
+                self.page.goto(url, wait_until='domcontentloaded', timeout=30000)
+                self.page.wait_for_timeout(2000)  # Extra settling time
+                
+                # Dismiss popups again after navigation
+                self._dismiss_pendo_popup()
+                
+                logger.info("✓ Navigation successful")
                 return True
             except Exception as e:
                 delay = self.retry_delay_base * (2 ** attempt)
@@ -501,16 +512,20 @@ class AdPauser:
                 
                 # CRITICAL: Wait for the page to reload/refresh after pausing
                 # The page usually reloads to show the updated status
-                logger.info("Waiting for page to reload after pause...")
-                try:
-                    # Wait for the table to reload (up to 10 seconds)
-                    self.page.wait_for_load_state('networkidle', timeout=10000)
-                except:
-                    logger.warning("Network didn't go idle, waiting 5 seconds...")
-                    self.page.wait_for_timeout(5000)
+                logger.info("Waiting for page to update after pause...")
                 
-                # Additional wait to ensure pause is processed
-                self.page.wait_for_timeout(3000)
+                # Wait for a reasonable amount of time for the pause to process
+                self.page.wait_for_timeout(4000)
+                
+                # Try to wait for network idle, but don't fail if it times out
+                try:
+                    self.page.wait_for_load_state('domcontentloaded', timeout=5000)
+                    logger.info("✓ Page updated after pause")
+                except:
+                    logger.warning("Page didn't signal reload, but continuing anyway")
+                
+                # Additional small wait
+                self.page.wait_for_timeout(1000)
                 
                 if self.take_screenshots:
                     self._take_screenshot("after_pause")
@@ -603,6 +618,19 @@ class AdPauser:
         except Exception as e:
             logger.warning(f"Failed to take screenshot: {e}")
     
+    def _dismiss_pendo_popup(self):
+        """Dismiss Pendo popup if it appears."""
+        try:
+            # Try to find and close the Pendo guide popup
+            close_button = self.page.locator('button.pendo-close-guide, div._pendo-close-guide_').first
+            if close_button.is_visible(timeout=1000):
+                close_button.click()
+                self.page.wait_for_timeout(300)
+                logger.info("✓ Dismissed Pendo popup")
+        except:
+            # No popup or couldn't close it - not critical
+            pass
+    
     def _set_ad_status_filter_to_active(self) -> bool:
         """
         Set the Ad Status filter to 'Active' only.
@@ -611,18 +639,30 @@ class AdPauser:
             True if successful, False otherwise
         """
         try:
+            logger.info("Setting Ad Status filter to 'Active'...")
+            
             # Click the Ad Status dropdown
             status_dropdown = self.page.locator('#select2-adStatus-container').first
             status_dropdown.click()
-            self.page.wait_for_timeout(500)
+            self.page.wait_for_timeout(800)
             
-            # Find and click "Active" option
-            active_option = self.page.locator('li.select2-results__option:has-text("Active")').first
-            active_option.click()
-            self.page.wait_for_timeout(500)
+            # Find and click "Active" option - be SPECIFIC to avoid "Active and Inactive"
+            # Look for the option that is EXACTLY "Active" (not "Active and Inactive")
+            active_option = self.page.locator('li.select2-results__option').filter(has_text="Active").first
             
-            logger.info("✓ Ad Status set to 'Active'")
-            return True
+            # Make sure we got the right one by checking text
+            all_options = self.page.locator('li.select2-results__option').all()
+            for option in all_options:
+                text = option.text_content().strip()
+                if text == "Active":  # Exact match
+                    option.click()
+                    self.page.wait_for_timeout(500)
+                    logger.info("✓ Ad Status set to 'Active'")
+                    return True
+            
+            logger.warning("Could not find exact 'Active' option")
+            return False
+            
         except Exception as e:
             logger.error(f"Failed to set Ad Status filter: {e}")
             return False
@@ -638,43 +678,42 @@ class AdPauser:
             True if successful, False otherwise
         """
         try:
-            # Click the Banner search input to activate it
-            banner_search = self.page.locator('input.select2-search__field[placeholder="All Banners"]').first
-            banner_search.click()
-            self.page.wait_for_timeout(500)
-            
-            # Enter each Creative ID
-            for creative_id in creative_ids:
-                logger.info(f"  Adding Creative ID {creative_id} to filter...")
+            # Enter each Creative ID - FOR MULTI-SELECT, SEARCH FIELD STAYS VISIBLE
+            for i, creative_id in enumerate(creative_ids, 1):
+                logger.info(f"  Adding Creative ID {creative_id} to filter ({i}/{len(creative_ids)})...")
+                
+                # Find the search field - it's inside li.select2-search.select2-search--inline
+                # The placeholder changes after first selection, so target the field by class only
+                banner_search = self.page.locator('li.select2-search.select2-search--inline input.select2-search__field').first
+                banner_search.click()
+                self.page.wait_for_timeout(300)
+                
+                # Clear previous search
+                banner_search.fill("")
+                self.page.wait_for_timeout(200)
                 
                 # Type the Creative ID
-                banner_search.type(creative_id, delay=50)
-                self.page.wait_for_timeout(800)  # Wait for dropdown to populate
+                banner_search.fill(creative_id)
+                self.page.wait_for_timeout(1500)  # Wait for dropdown to populate
                 
                 # Click the matching option from dropdown
-                # The option shows as "NAME - [CREATIVE_ID]"
                 try:
                     option = self.page.locator(f'li.select2-results__option:has-text("[{creative_id}]")').first
-                    if option.is_visible(timeout=2000):
-                        option.click()
-                        self.page.wait_for_timeout(300)
-                        logger.info(f"    ✓ Selected Creative ID {creative_id}")
-                    else:
-                        logger.warning(f"    Could not find option for Creative ID {creative_id}")
+                    option.wait_for(state='visible', timeout=3000)
+                    option.click()
+                    self.page.wait_for_timeout(600)  # Wait after selecting
+                    logger.info(f"    ✓ Selected Creative ID {creative_id}")
                 except Exception as e:
-                    logger.warning(f"    Error selecting Creative ID {creative_id}: {e}")
-                    continue
-                
-                # Click back into search field for next ID
-                banner_search.click()
-                self.page.wait_for_timeout(200)
+                    logger.warning(f"    Could not find/select Creative ID {creative_id}: {e}")
+                    self.page.keyboard.press("Escape")
+                    self.page.wait_for_timeout(300)
             
             # Click "Apply Filters" button
             logger.info("Clicking 'Apply Filters' button...")
             apply_button = self.page.locator('button:has-text("Apply Filters")').first
             if apply_button.is_visible(timeout=3000):
                 apply_button.click()
-                self.page.wait_for_timeout(2000)  # Wait for table to reload
+                self.page.wait_for_timeout(3000)  # Wait longer for filtered table to reload
                 logger.info("✓ Filters applied")
                 return True
             else:
