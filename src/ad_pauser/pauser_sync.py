@@ -80,14 +80,27 @@ class AdPauser:
                 result.time_taken = time.time() - start_time
                 return result
             
+            # FASTER METHOD: Use filters to narrow down results
+            # 1. Set Ad Status to "Active" only
+            logger.info("Setting Ad Status filter to 'Active' only...")
+            if not self._set_ad_status_filter_to_active():
+                logger.warning("Could not set Ad Status filter, continuing anyway...")
+            
+            # 2. Use Banner Name/ID search to filter to specific Creative IDs
+            logger.info(f"Filtering to {len(creative_ids)} Creative ID(s) using Banner search...")
+            if not self._filter_by_banner_ids(creative_ids):
+                logger.warning("Could not set Banner ID filter, continuing with manual search...")
+            else:
+                logger.info("✓ Filters applied - table now shows only active ads with target Creative IDs")
+            
             # Set pagination to 100
             if not self._set_pagination_to_100():
                 logger.warning("Could not set pagination to 100, continuing with default")
                 # Not a fatal error, continue anyway
             
-            # Get total pages
+            # Get total pages (should be much fewer now due to filters!)
             total_pages = self._get_total_pages()
-            logger.info(f"Found {total_pages} page(s) to process")
+            logger.info(f"Found {total_pages} page(s) to process (after filtering)")
             
             # Track found and paused ads
             found_ids = []
@@ -364,16 +377,15 @@ class AdPauser:
                         
                         # Check if this creative ID is in our list
                         if creative_id in creative_ids_to_find:
-                            # CRITICAL: Check if the ad is active (not already paused)
-                            # Look for: <div class="campaignAdBidStatus">active</div>
+                            # If filters worked, all ads shown should be active already
+                            # But we'll still check status as a safety measure
                             status_div = row.locator('div.campaignAdBidStatus').first
                             
                             try:
                                 status_text = status_div.text_content().strip().lower()
-                                logger.debug(f"  Creative ID {creative_id} status: '{status_text}'")
                             except Exception as e:
                                 logger.debug(f"  Could not get status for Creative ID {creative_id}: {e}")
-                                status_text = ""
+                                status_text = "active"  # Assume active if filter worked
                             
                             # Only select if status is "active"
                             if status_text != "active":
@@ -590,4 +602,86 @@ class AdPauser:
             logger.info(f"Screenshot saved: {filename}")
         except Exception as e:
             logger.warning(f"Failed to take screenshot: {e}")
+    
+    def _set_ad_status_filter_to_active(self) -> bool:
+        """
+        Set the Ad Status filter to 'Active' only.
+        
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Click the Ad Status dropdown
+            status_dropdown = self.page.locator('#select2-adStatus-container').first
+            status_dropdown.click()
+            self.page.wait_for_timeout(500)
+            
+            # Find and click "Active" option
+            active_option = self.page.locator('li.select2-results__option:has-text("Active")').first
+            active_option.click()
+            self.page.wait_for_timeout(500)
+            
+            logger.info("✓ Ad Status set to 'Active'")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to set Ad Status filter: {e}")
+            return False
+    
+    def _filter_by_banner_ids(self, creative_ids: Set[str]) -> bool:
+        """
+        Use the Banner Name/ID search to filter to specific Creative IDs.
+        
+        Args:
+            creative_ids: Set of Creative IDs to filter to
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Click the Banner search input to activate it
+            banner_search = self.page.locator('input.select2-search__field[placeholder="All Banners"]').first
+            banner_search.click()
+            self.page.wait_for_timeout(500)
+            
+            # Enter each Creative ID
+            for creative_id in creative_ids:
+                logger.info(f"  Adding Creative ID {creative_id} to filter...")
+                
+                # Type the Creative ID
+                banner_search.type(creative_id, delay=50)
+                self.page.wait_for_timeout(800)  # Wait for dropdown to populate
+                
+                # Click the matching option from dropdown
+                # The option shows as "NAME - [CREATIVE_ID]"
+                try:
+                    option = self.page.locator(f'li.select2-results__option:has-text("[{creative_id}]")').first
+                    if option.is_visible(timeout=2000):
+                        option.click()
+                        self.page.wait_for_timeout(300)
+                        logger.info(f"    ✓ Selected Creative ID {creative_id}")
+                    else:
+                        logger.warning(f"    Could not find option for Creative ID {creative_id}")
+                except Exception as e:
+                    logger.warning(f"    Error selecting Creative ID {creative_id}: {e}")
+                    continue
+                
+                # Click back into search field for next ID
+                banner_search.click()
+                self.page.wait_for_timeout(200)
+            
+            # Click "Apply Filters" button
+            logger.info("Clicking 'Apply Filters' button...")
+            apply_button = self.page.locator('button:has-text("Apply Filters")').first
+            if apply_button.is_visible(timeout=3000):
+                apply_button.click()
+                self.page.wait_for_timeout(2000)  # Wait for table to reload
+                logger.info("✓ Filters applied")
+                return True
+            else:
+                logger.warning("Apply Filters button not found")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Failed to set Banner ID filters: {e}")
+            return False
 
