@@ -146,20 +146,20 @@ class AdPauser:
                     # Navigate back to page 1 for next round
                     if round_num < max_rounds and not self.dry_run:
                         logger.info("Navigating back to page 1...")
-                        # Click page 1 button: <a href="#" class="page-link" data-dt-idx="0">1</a>
+                        # Click First button: <a href="#" class="page-link first" aria-label="First">First</a>
                         try:
-                            page_1_button = self.page.locator('a.page-link[data-dt-idx="0"]').first
-                            if page_1_button.is_visible(timeout=3000):
-                                page_1_button.click()
+                            first_button = self.page.locator('a.page-link.first').first
+                            if first_button.is_visible(timeout=3000):
+                                first_button.click()
                                 self.page.wait_for_timeout(2000)
-                                logger.info("✓ Back to page 1")
+                                logger.info("✓ Clicked First button, back to page 1")
                             else:
                                 # Fallback: reload the page
                                 url = f"https://advertiser.trafficjunky.com/campaign/{campaign_id}/overview/ads"
                                 self._navigate_with_retry(url)
                                 self._set_pagination_to_100()
                         except Exception as e:
-                            logger.warning(f"Could not click page 1 button: {e}, reloading page...")
+                            logger.warning(f"Could not click First button: {e}, reloading page...")
                             url = f"https://advertiser.trafficjunky.com/campaign/{campaign_id}/overview/ads"
                             self._navigate_with_retry(url)
                             self._set_pagination_to_100()

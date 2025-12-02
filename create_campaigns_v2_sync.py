@@ -33,7 +33,7 @@ def main():
     
     # Start browser
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False, slow_mo=500)  # Always visible
+        browser = p.chromium.launch(headless=False, slow_mo=100)  # 5x faster!
         context = browser.new_context(viewport={'width': 1920, 'height': 1080})
         page = context.new_page()
         page.set_default_timeout(30000)

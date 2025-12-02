@@ -230,6 +230,59 @@ class CampaignDefinition:
                 for variant, vs in self.variant_statuses.items()
             }
         }
+    
+    @staticmethod
+    def from_dict(data: Dict[str, Any]) -> 'CampaignDefinition':
+        """Create CampaignDefinition from dictionary."""
+        # Parse keywords
+        keywords = [
+            Keyword(
+                name=kw["name"],
+                match_type=MatchType(kw["match_type"])
+            )
+            for kw in data.get("keywords", [])
+        ]
+        
+        # Parse settings
+        settings_data = data.get("settings", {})
+        settings = CampaignSettings(
+            target_cpa=settings_data.get("target_cpa", 50.0),
+            per_source_test_budget=settings_data.get("per_source_test_budget", 200.0),
+            max_bid=settings_data.get("max_bid", 10.0),
+            frequency_cap=settings_data.get("frequency_cap", 2),
+            max_daily_budget=settings_data.get("max_daily_budget", 250.0),
+            gender=settings_data.get("gender", "male"),
+            ios_version=OSVersion.parse(settings_data.get("ios_version", "All Versions")),
+            android_version=OSVersion.parse(settings_data.get("android_version", "All Versions")),
+            ad_format=settings_data.get("ad_format", "NATIVE")
+        )
+        
+        # Parse variant statuses
+        variant_statuses = {}
+        for variant, vs_data in data.get("variant_statuses", {}).items():
+            variant_statuses[variant] = VariantStatus(
+                status=CampaignStatus(vs_data.get("status", "pending")),
+                campaign_id=vs_data.get("campaign_id"),
+                campaign_name=vs_data.get("campaign_name"),
+                ads_uploaded=vs_data.get("ads_uploaded", 0),
+                error=vs_data.get("error"),
+                step=vs_data.get("step"),
+                completed_at=vs_data.get("completed_at")
+            )
+        
+        return CampaignDefinition(
+            group=data["group"],
+            keywords=keywords,
+            geo=data.get("geo", []),
+            csv_file=data.get("csv_file", ""),
+            variants=data.get("variants", []),
+            settings=settings,
+            enabled=data.get("enabled", True),
+            mobile_combined=data.get("mobile_combined", False),
+            test_number=data.get("test_number"),
+            status=CampaignStatus(data.get("status", "pending")),
+            variant_statuses=variant_statuses
+        )
 
 
 @dataclass
