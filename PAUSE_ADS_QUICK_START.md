@@ -62,13 +62,15 @@ Campaign ID,Campaign Name,Notes
 
 ## 🚀 Usage
 
-### Step 1: Prepare Your CSV Files
+### Single Instance Mode (1 Browser)
+
+#### Step 1: Prepare Your CSV Files
 
 1. Create or download the Creative IDs CSV with the ads you want to pause
 2. Create or download the Campaign IDs CSV with campaigns to search in
 3. Save both files to `data/input/Ad_Pause/` (organized folder for pause operations)
 
-### Step 2: Dry Run (Recommended First!)
+#### Step 2: Dry Run (Recommended First!)
 
 **Always test with dry run first** to see what would be paused without actually pausing:
 
@@ -85,7 +87,7 @@ This will:
 - ✓ Generate a preview report
 - ✗ **NOT** actually pause any ads
 
-### Step 3: Actual Pause
+#### Step 3: Actual Pause
 
 Once you've verified the dry run looks correct:
 
@@ -94,6 +96,52 @@ python Pause_ads_V1.py \
     --creatives data/input/Ad_Pause/black_friday_creatives.csv \
     --campaigns data/input/Ad_Pause/all_campaigns.csv
 ```
+
+---
+
+### ⚡ Parallel Mode (Multiple Browsers - FASTER!)
+
+**Recommended for 100+ campaigns**
+
+Parallel mode splits your Campaign IDs CSV among multiple workers, each running its own browser instance.
+
+#### Run with 2 workers (safest)
+```bash
+python3 run_parallel_ad_pauser.py \
+    --creatives data/input/Ad_Pause/creatives.csv \
+    --campaigns data/input/Ad_Pause/campaigns.csv \
+    --workers 2
+```
+
+#### Run with 3 workers (fastest)
+```bash
+python3 run_parallel_ad_pauser.py \
+    --creatives data/input/Ad_Pause/creatives.csv \
+    --campaigns data/input/Ad_Pause/campaigns.csv \
+    --workers 3
+```
+
+#### Parallel Dry Run
+```bash
+python3 run_parallel_ad_pauser.py \
+    --creatives data/input/Ad_Pause/creatives.csv \
+    --campaigns data/input/Ad_Pause/campaigns.csv \
+    --workers 2 \
+    --dry-run
+```
+
+**How Parallel Mode Works:**
+1. Splits your Campaign IDs CSV into N groups
+2. Launches N browser instances (one per worker)
+3. Each worker gets the same Creative IDs CSV
+4. All workers run simultaneously
+5. Each worker generates its own report
+
+**Worker Logs:** `logs/ad_pauser_worker_1.log`, `logs/ad_pauser_worker_2.log`, etc.
+
+**💡 Tip:** Use 2-3 workers for best results. More than 3 may cause browser conflicts.
+
+---
 
 ### Step 4: Solve reCAPTCHA
 
@@ -368,6 +416,7 @@ If something goes wrong, run with `--screenshots` to see exactly what happened.
 
 ## ⚡ Quick Reference
 
+### Single Instance Mode
 ```bash
 # Dry run (preview)
 python Pause_ads_V1.py --creatives CREATIVES.csv --campaigns CAMPAIGNS.csv --dry-run
@@ -383,6 +432,21 @@ python Pause_ads_V1.py --creatives CREATIVES.csv --campaigns CAMPAIGNS.csv --hea
 
 # Help
 python Pause_ads_V1.py --help
+```
+
+### Parallel Mode (FASTER for 100+ campaigns)
+```bash
+# 2 workers (safest)
+python3 run_parallel_ad_pauser.py --creatives CREATIVES.csv --campaigns CAMPAIGNS.csv --workers 2
+
+# 3 workers (fastest)
+python3 run_parallel_ad_pauser.py --creatives CREATIVES.csv --campaigns CAMPAIGNS.csv --workers 3
+
+# Parallel dry run
+python3 run_parallel_ad_pauser.py --creatives CREATIVES.csv --campaigns CAMPAIGNS.csv --workers 2 --dry-run
+
+# Help
+python3 run_parallel_ad_pauser.py --help
 ```
 
 ---
