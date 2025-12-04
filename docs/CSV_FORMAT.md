@@ -174,6 +174,6 @@ Cougars,"cougar;cougars",broad,female,US,,cougar_ads.csv,60,150,12,2,300,"deskto
    - If targeting multiple geos in one campaign: `Milfs-Desktop`
 
 5. **CSV file paths**
-   - Relative to `data/input/` directory
-   - Example: `ads.csv` → `/Users/joshb/Desktop/Dev/TJ_tool/data/input/ads.csv`
+   - Relative to `data/input/Campaign_Creation/` directory
+   - Example: `ads.csv` → `data/input/Campaign_Creation/ads.csv`
 

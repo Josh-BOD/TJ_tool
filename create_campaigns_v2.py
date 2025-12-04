@@ -209,11 +209,14 @@ def dry_run(batch: CampaignBatch, csv_dir: Path):
     print_subheader("NEXT STEPS")
     print("\n✓ Validation passed - ready to create campaigns!")
     print("\nTo create these campaigns for real:")
-    print(f"  python create_campaigns.py --input {batch.input_file}")
+    print(f"  python create_campaigns_v2.py --input {batch.input_file}")
     print("\nTo modify the configuration:")
     print(f"  1. Edit: {batch.input_file}")
     print(f"  2. Run dry-run again to verify changes")
     print(f"  3. Run without --dry-run when ready")
+    print("\nFolder structure:")
+    print("  Input:  data/input/Campaign_Creation/")
+    print("  Output: data/output/Campaign_Creation/")
     
     print("\n" + "=" * 65 + "\n")
     
@@ -228,19 +231,21 @@ def main():
         epilog="""
 Examples:
   # Dry-run (validate and preview)
-  python create_campaigns.py --input campaigns.csv --dry-run
+  python create_campaigns_v2.py --input data/input/Campaign_Creation/campaigns.csv --dry-run
   
   # Create campaigns
-  python create_campaigns.py --input campaigns.csv
+  python create_campaigns_v2.py --input data/input/Campaign_Creation/campaigns.csv
   
   # Resume from checkpoint
-  python create_campaigns.py --input campaigns.csv --resume SESSION_ID
-  
-  # Specify CSV directory and session file
-  python create_campaigns.py --input campaigns.csv --csv-dir data/input/ --session session.json
+  python create_campaigns_v2.py --input data/input/Campaign_Creation/campaigns.csv --resume SESSION_ID
   
   # Visible browser (not headless)
-  python create_campaigns.py --input campaigns.csv --no-headless
+  python create_campaigns_v2.py --input data/input/Campaign_Creation/campaigns.csv --no-headless
+
+Input/Output Folders:
+  - Campaign definitions: data/input/Campaign_Creation/
+  - Ad CSV files: data/input/Campaign_Creation/
+  - Output logs/summaries: data/output/Campaign_Creation/
         """
     )
     
@@ -248,14 +253,21 @@ Examples:
         "--input",
         type=Path,
         required=True,
-        help="Input CSV file with campaign definitions"
+        help="Input CSV file with campaign definitions (default location: data/input/Campaign_Creation/)"
     )
     
     parser.add_argument(
         "--csv-dir",
         type=Path,
-        default=Path("data/input"),
-        help="Directory containing CSV ad files (default: data/input/)"
+        default=Path("data/input/Campaign_Creation"),
+        help="Directory containing CSV ad files (default: data/input/Campaign_Creation/)"
+    )
+    
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("data/output/Campaign_Creation"),
+        help="Directory for output logs and summaries (default: data/output/Campaign_Creation/)"
     )
     
     parser.add_argument(
@@ -310,12 +322,17 @@ Examples:
     # Validate input file
     if not args.input.exists():
         print_error(f"Input file not found: {args.input}")
+        print(f"\nExpected location: data/input/Campaign_Creation/")
+        print("See data/input/Campaign_Creation/README.md for format details.")
         return 1
     
     # Validate CSV directory
     if not args.csv_dir.exists():
         print_error(f"CSV directory not found: {args.csv_dir}")
         return 1
+    
+    # Create output directory if it doesn't exist
+    args.output_dir.mkdir(parents=True, exist_ok=True)
     
     try:
         # Parse CSV

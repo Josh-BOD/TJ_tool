@@ -1,5 +1,12 @@
 # Campaign Creation Tool V2 - Quick Start
 
+## Folder Structure
+
+```
+data/input/Campaign_Creation/     <- Campaign definition CSVs + Ad CSVs
+data/output/Campaign_Creation/    <- Output logs and summaries
+```
+
 ## Quick Start Guide
 
 ### Step 1: Add Your In-Stream Template IDs
@@ -27,7 +34,7 @@ Edit `src/campaign_templates.py` and find this section:
 
 ### Step 2: Create Your Campaign CSV
 
-Use the example file as a template: `data/input/example_campaigns_v2.csv`
+Use the example file as a template: `data/input/Campaign_Creation/example_campaigns.csv`
 
 **Key Points:**
 - Add `ad_format` column with value `NATIVE` or `INSTREAM`
@@ -44,7 +51,7 @@ Cougars-InStream,"cougar",instream_ads.csv,"desktop,ios",INSTREAM,TRUE
 ### Step 3: Dry-Run Test
 
 ```bash
-python create_campaigns_v2.py --input data/input/example_campaigns_v2.csv --dry-run
+python create_campaigns_v2.py --input data/input/Campaign_Creation/example_campaigns.csv --dry-run
 ```
 
 This will:
@@ -56,7 +63,7 @@ This will:
 ### Step 4: Create Campaigns
 
 ```bash
-python create_campaigns_v2.py --input data/input/your_campaigns.csv --no-headless
+python create_campaigns_v2.py --input data/input/Campaign_Creation/your_campaigns.csv --no-headless
 ```
 
 **Flags:**
@@ -109,7 +116,7 @@ Teen_Video_2,https://clk.example.com?sub11=CAMPAIGN_NAME,1032468251,Watch Now,ht
 
 ### 4. Run:
 ```bash
-python create_campaigns_v2.py --input campaigns.csv
+python create_campaigns_v2.py --input data/input/Campaign_Creation/campaigns.csv
 ```
 
 This creates:

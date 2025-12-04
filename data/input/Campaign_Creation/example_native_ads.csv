@@ -1,0 +1,4 @@
+"Ad Name","Target URL","Video Creative ID","Thumbnail Creative ID",Headline,"Brand Name"
+"Example Native Ad 1","https://clk.example.com?ref=trafficjunky&sub1={CampaignID}&sub2={BLPID}&sub3={BLPName}&SiteName={SiteName}&SpotName={SpotName}&sub7={BanID}&sub8={BanName}&sub9={AdID}&sub10={SpotID}&sub11=CAMPAIGN_NAME&Keywords={Keywords}&ref_id={ACLID}&cost={BidValue}","YOUR_VIDEO_ID_1","YOUR_THUMBNAIL_ID_1","Amazing Experience","YourBrand"
+"Example Native Ad 2","https://clk.example.com?ref=trafficjunky&sub1={CampaignID}&sub2={BLPID}&sub3={BLPName}&SiteName={SiteName}&SpotName={SpotName}&sub7={BanID}&sub8={BanName}&sub9={AdID}&sub10={SpotID}&sub11=CAMPAIGN_NAME&Keywords={Keywords}&ref_id={ACLID}&cost={BidValue}","YOUR_VIDEO_ID_2","YOUR_THUMBNAIL_ID_2","Try It Now","YourBrand"
+
