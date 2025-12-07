@@ -244,7 +244,8 @@ class CSVParser:
         )
         
         # Parse test number (can be numeric or alphanumeric like "12", "12A", "V2", etc.)
-        test_number = row.get("t", "").strip()
+        # Support both "t" and "test_number" column names
+        test_number = row.get("test_number", "").strip() or row.get("t", "").strip()
         if not test_number:
             test_number = None
         
