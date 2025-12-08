@@ -25,6 +25,8 @@ from campaign_automation_v2.validator import validate_batch
 from campaign_automation_v2.models import CampaignBatch, CampaignDefinition
 from campaign_automation_v2.creator_sync import CampaignCreator
 from campaign_templates import generate_campaign_name, DEFAULT_SETTINGS, get_templates_for_format
+from native_uploader import NativeUploader
+from uploader import TJUploader
 
 # Setup logging
 worker_id = os.environ.get('WORKER_ID', '1')
@@ -35,34 +37,38 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def upload_csv_to_campaign(page, csv_path: Path, ad_format: str = "NATIVE"):
-    """Upload CSV file to create ads in campaign."""
+def upload_csv_to_campaign(page, csv_path: Path, campaign_name: str, ad_format: str = "NATIVE"):
+    """Upload CSV file to create ads in campaign using proper uploader."""
     try:
-        # Click Mass Create with CSV button
-        page.click('a:has-text("Mass Create with CSV")', timeout=5000)
-        time.sleep(1)
+        # Use the appropriate uploader based on ad format
+        if ad_format.upper() == "NATIVE":
+            uploader = NativeUploader(dry_run=False)
+            result = uploader.upload_to_campaign(
+                page=page,
+                campaign_id="current",  # Already on campaign page
+                csv_path=csv_path,
+                campaign_name=campaign_name,
+                skip_navigation=True  # Already on ads page
+            )
+        else:
+            # INSTREAM uses TJUploader
+            uploader = TJUploader(dry_run=False)
+            result = uploader.upload_to_campaign(
+                page=page,
+                campaign_id="current",
+                csv_path=csv_path,
+                campaign_name=campaign_name,
+                skip_navigation=True
+            )
         
-        # Upload the CSV file
-        page.set_input_files('input[type="file"]', str(csv_path))
-        time.sleep(1)
-        
-        # Click Create CSV Preview
-        page.click('button:has-text("Create CSV Preview")')
-        time.sleep(2)
-        
-        # Wait for preview to load
-        page.wait_for_selector('table.dataTable', timeout=30000)
-        time.sleep(1)
-        
-        # Click Create Ad(s)
-        page.click('button:has-text("Create ad")')
-        time.sleep(2)
-        
-        # Wait for success
-        page.wait_for_selector('div.alert-success', timeout=60000)
-        
-        logger.info("✓ CSV uploaded successfully")
-        return True
+        if result.get('status') == 'success':
+            ads_created = result.get('ads_created', 0)
+            logger.info(f"✓ CSV uploaded successfully - {ads_created} ads created")
+            return True
+        else:
+            error = result.get('error', 'Unknown error')
+            logger.error(f"✗ CSV upload failed: {error}")
+            return False
         
     except Exception as e:
         logger.error(f"✗ CSV upload failed: {e}")
@@ -108,8 +114,8 @@ def create_campaign_set(page, campaign: CampaignDefinition, csv_dir: Path):
             logger.info(f"✓ Created campaign: {campaign_name}")
             logger.info(f"  ID: {campaign_id}")
             
-            # Upload CSV
-            upload_csv_to_campaign(page, csv_path, ad_format)
+            # Upload CSV with campaign name for tracking URL replacement
+            upload_csv_to_campaign(page, csv_path, campaign_name, ad_format)
             
             created_campaigns.append((campaign_id, campaign_name))
             
