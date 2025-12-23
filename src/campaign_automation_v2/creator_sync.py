@@ -19,7 +19,13 @@ sys_path = Path(__file__).parent.parent
 if str(sys_path) not in sys.path:
     sys.path.insert(0, str(sys_path))
 
-from campaign_templates import generate_campaign_name, DEFAULT_SETTINGS, TEMPLATE_CAMPAIGNS
+from campaign_templates import (
+    generate_campaign_name, 
+    DEFAULT_SETTINGS, 
+    TEMPLATE_CAMPAIGNS,
+    REMARKETING_TEMPLATES,
+    get_templates
+)
 
 # Setup logger
 logger = logging.getLogger(__name__)
@@ -35,20 +41,24 @@ class CampaignCreator:
     
     BASE_URL = "https://advertiser.trafficjunky.com"
     
-    def __init__(self, page: Page, ad_format: str = "NATIVE"):
+    def __init__(self, page: Page, ad_format: str = "NATIVE", campaign_type: str = "Standard"):
         """
         Initialize campaign creator.
         
         Args:
             page: Playwright page object (already logged in)
             ad_format: Ad format - "NATIVE" or "INSTREAM" (default: NATIVE)
+            campaign_type: Campaign type - "Standard" or "Remarketing" (default: Standard)
         """
         self.page = page
         self.ad_format = ad_format.upper()
+        self.campaign_type = campaign_type.title()
         
-        # Get templates for this format
-        from campaign_templates import get_templates_for_format
-        self.templates = get_templates_for_format(self.ad_format)
+        # Get templates for this format and campaign type
+        self.templates = get_templates(self.ad_format, self.campaign_type)
+        
+        # Track if this is a remarketing campaign
+        self.is_remarketing = self.campaign_type.lower() == "remarketing"
     
     def create_desktop_campaign(
         self,
@@ -69,19 +79,20 @@ class CampaignCreator:
             CampaignCreationError: If creation fails
         """
         template_id = self.templates["desktop"]["id"]
-        keyword = campaign.primary_keyword
+        keyword = campaign.primary_keyword if campaign.keywords else campaign.group
         
         # Generate campaign name with all geos
         campaign_name = generate_campaign_name(
             geo=campaign.geo,  # Pass full geo list for multi-geo naming
             language=DEFAULT_SETTINGS["language"],
             ad_format=self.ad_format,  # Use the format passed to creator
-            bid_type=DEFAULT_SETTINGS["bid_type"],
+            bid_type=campaign.settings.bid_type,  # Use campaign's bid type
             source=DEFAULT_SETTINGS["source"],
             keyword=keyword,
             device="desktop",
             gender=campaign.settings.gender,
-            test_number=campaign.test_number
+            test_number=campaign.test_number,
+            campaign_type=campaign.settings.campaign_type  # Pass campaign type for naming
         )
         
         try:
@@ -95,7 +106,14 @@ class CampaignCreator:
             # Configure campaign
             self._configure_basic_settings(campaign_name, campaign.group, campaign.settings.gender)
             self._configure_geo(campaign.geo)  # Pass full geo list
-            self._configure_keywords(campaign.keywords)
+            
+            # Configure keywords only if there are any (optional for remarketing)
+            if campaign.keywords:
+                self._configure_keywords(campaign.keywords)
+            else:
+                # Just save and continue past the keywords step
+                self._click_save_and_continue()
+            
             self._configure_tracking_and_bids(campaign)
             self._configure_schedule_and_budget(campaign)
             
@@ -123,19 +141,20 @@ class CampaignCreator:
             Tuple of (campaign_id, campaign_name)
         """
         template_id = self.templates["ios"]["id"]
-        keyword = campaign.primary_keyword
+        keyword = campaign.primary_keyword if campaign.keywords else campaign.group
         
         campaign_name = generate_campaign_name(
             geo=campaign.geo,  # Pass full geo list for multi-geo naming
             language=DEFAULT_SETTINGS["language"],
             ad_format=self.ad_format,  # Use the format passed to creator
-            bid_type=DEFAULT_SETTINGS["bid_type"],
+            bid_type=campaign.settings.bid_type,  # Use campaign's bid type
             source=DEFAULT_SETTINGS["source"],
             keyword=keyword,
             device="ios",
             gender=campaign.settings.gender,
             mobile_combined=campaign.mobile_combined,
-            test_number=campaign.test_number
+            test_number=campaign.test_number,
+            campaign_type=campaign.settings.campaign_type  # Pass campaign type for naming
         )
         
         try:
@@ -158,7 +177,13 @@ class CampaignCreator:
                 # Configure iOS OS targeting with version constraint only
                 self._configure_os_targeting(["iOS"], campaign.settings.ios_version)
             
-            self._configure_keywords(campaign.keywords)
+            # Configure keywords only if there are any (optional for remarketing)
+            if campaign.keywords:
+                self._configure_keywords(campaign.keywords)
+            else:
+                # Just save and continue past the keywords step
+                self._click_save_and_continue()
+            
             self._configure_tracking_and_bids(campaign)
             self._configure_schedule_and_budget(campaign)
             
@@ -187,19 +212,20 @@ class CampaignCreator:
         Returns:
             Tuple of (campaign_id, campaign_name)
         """
-        keyword = campaign.primary_keyword
+        keyword = campaign.primary_keyword if campaign.keywords else campaign.group
         
         campaign_name = generate_campaign_name(
             geo=campaign.geo,  # Pass full geo list for multi-geo naming
             language=DEFAULT_SETTINGS["language"],
             ad_format=self.ad_format,  # Use the format passed to creator
-            bid_type=DEFAULT_SETTINGS["bid_type"],
+            bid_type=campaign.settings.bid_type,  # Use campaign's bid type
             source=DEFAULT_SETTINGS["source"],
             keyword=keyword,
             device="android",
             gender=campaign.settings.gender,
             mobile_combined=campaign.mobile_combined,
-            test_number=campaign.test_number
+            test_number=campaign.test_number,
+            campaign_type=campaign.settings.campaign_type  # Pass campaign type for naming
         )
         
         try:
@@ -228,6 +254,80 @@ class CampaignCreator:
         except Exception as e:
             raise CampaignCreationError(f"Failed to create Android campaign: {str(e)}")
     
+    def create_all_mobile_campaign(
+        self,
+        campaign: CampaignDefinition,
+        geo: str
+    ) -> Tuple[str, str]:
+        """
+        Create an All Mobile campaign (combined iOS + Android) from template.
+        
+        This is primarily used for remarketing campaigns where we have a dedicated
+        "all_mobile" template that already targets both iOS and Android.
+        
+        Args:
+            campaign: Campaign definition
+            geo: Geo code
+            
+        Returns:
+            Tuple of (campaign_id, campaign_name)
+        """
+        # Use all_mobile template if available, otherwise fall back to ios template
+        if "all_mobile" in self.templates:
+            template_id = self.templates["all_mobile"]["id"]
+        else:
+            template_id = self.templates["ios"]["id"]
+        
+        keyword = campaign.primary_keyword if campaign.keywords else campaign.group
+        
+        campaign_name = generate_campaign_name(
+            geo=campaign.geo,  # Pass full geo list for multi-geo naming
+            language=DEFAULT_SETTINGS["language"],
+            ad_format=self.ad_format,  # Use the format passed to creator
+            bid_type=campaign.settings.bid_type,  # Use campaign's bid type
+            source=DEFAULT_SETTINGS["source"],
+            keyword=keyword,
+            device="all_mobile",  # Will be converted to MOB_ALL
+            gender=campaign.settings.gender,
+            mobile_combined=True,  # Always true for all_mobile
+            test_number=campaign.test_number,
+            campaign_type=campaign.settings.campaign_type  # Pass campaign type for naming
+        )
+        
+        try:
+            self.page.goto(f"{self.BASE_URL}/campaigns")
+            self.page.wait_for_load_state("networkidle")
+            
+            campaign_id = self._clone_campaign(template_id)
+            
+            self._configure_basic_settings(campaign_name, campaign.group, campaign.settings.gender)
+            self._configure_geo(campaign.geo)  # Pass full geo list
+            
+            # Ensure both iOS and Android OS targeting
+            self._configure_os_targeting(
+                ["iOS", "Android"],
+                campaign.settings.ios_version,
+                campaign.settings.android_version
+            )
+            
+            # Configure keywords only if there are any (optional for remarketing)
+            if campaign.keywords:
+                self._configure_keywords(campaign.keywords)
+            else:
+                # Just save and continue past the keywords step
+                self._click_save_and_continue()
+            
+            self._configure_tracking_and_bids(campaign)
+            self._configure_schedule_and_budget(campaign)
+            
+            # Delete any inherited ads before uploading new ones
+            self._delete_all_ads()
+            
+            return campaign_id, campaign_name
+            
+        except Exception as e:
+            raise CampaignCreationError(f"Failed to create all mobile campaign: {str(e)}")
+    
     # =========================================================================
     # V3 From-Scratch Campaign Creation
     # =========================================================================
@@ -245,7 +345,7 @@ class CampaignCreator:
         
         Args:
             campaign: Campaign definition with settings
-            device_variant: "desktop", "ios", or "android" (for naming)
+            device_variant: "desktop", "ios", "android", or "all_mobile" (for naming)
             
         Returns:
             Tuple of (campaign_id, campaign_name)
@@ -253,7 +353,7 @@ class CampaignCreator:
         Raises:
             CampaignCreationError: If creation fails
         """
-        keyword = campaign.primary_keyword
+        keyword = campaign.primary_keyword if campaign.keywords else campaign.group
         settings = campaign.settings
         
         # Generate campaign name
@@ -261,13 +361,14 @@ class CampaignCreator:
             geo=campaign.geo,
             language=DEFAULT_SETTINGS["language"],
             ad_format=self.ad_format,
-            bid_type=DEFAULT_SETTINGS["bid_type"],
+            bid_type=settings.bid_type,  # Use campaign's bid type
             source=DEFAULT_SETTINGS["source"],
             keyword=keyword,
             device=device_variant,
             gender=settings.gender,
             mobile_combined=campaign.mobile_combined,
-            test_number=campaign.test_number
+            test_number=campaign.test_number,
+            campaign_type=settings.campaign_type  # Pass campaign type for naming
         )
         
         try:
@@ -858,6 +959,12 @@ class CampaignCreator:
     
     def _configure_keywords(self, keywords: List[Keyword]):
         """Configure keyword targeting."""
+        # If no keywords, just save and continue (for remarketing campaigns without keywords)
+        if not keywords:
+            logger.info("No keywords to configure, skipping...")
+            self._click_save_and_continue()
+            return
+        
         # Remove all existing keywords
         self.page.click('a.removeAllKeywords[data-selection-type="include"]')
         time.sleep(0.5)
@@ -935,19 +1042,58 @@ class CampaignCreator:
         """Configure tracking and bids (Step 3)."""
         settings = campaign.settings
         
-        # Target CPA
-        self.page.fill('input#target_cpa', "")
-        self.page.fill('input#target_cpa', str(settings.target_cpa))
+        # Check if this is a CPM campaign
+        if settings.is_cpm:
+            logger.info("Configuring CPM bidding...")
+            self._configure_cpm_bidding(campaign)
+        else:
+            # CPA bidding (default)
+            logger.info("Configuring CPA bidding...")
+            
+            # Target CPA
+            self.page.fill('input#target_cpa', "")
+            self.page.fill('input#target_cpa', str(settings.target_cpa))
+            
+            # Per Source Test Budget
+            self.page.fill('input#per_source_test_budget', "")
+            self.page.fill('input#per_source_test_budget', str(settings.per_source_test_budget))
+            
+            # Max Bid
+            self.page.fill('input#maximum_bid', "")
+            self.page.fill('input#maximum_bid', str(settings.max_bid))
+            
+            # Include all sources (only for NATIVE, not for INSTREAM)
+            try:
+                source_checkbox = self.page.locator('input.checkUncheckAll[data-table="sourceSelectionTable"]')
+                if source_checkbox.is_visible(timeout=2000):
+                    self.page.check('input.checkUncheckAll[data-table="sourceSelectionTable"]')
+                    time.sleep(0.3)
+                    self.page.click('button.includeBtn[data-btn-action="include"]')
+                    time.sleep(0.5)
+            except:
+                # INSTREAM campaigns don't have source selection
+                pass
         
-        # Per Source Test Budget
-        self.page.fill('input#per_source_test_budget', "")
-        self.page.fill('input#per_source_test_budget', str(settings.per_source_test_budget))
+        # Save & Continue
+        self._click_save_and_continue()
+    
+    def _configure_cpm_bidding(self, campaign: CampaignDefinition):
+        """
+        Configure CPM bidding using suggested bids from sources.
         
-        # Max Bid
-        self.page.fill('input#maximum_bid', "")
-        self.page.fill('input#maximum_bid', str(settings.max_bid))
+        This method handles the CPM bidding workflow on the Source Selection page.
+        It will use each source's suggested CPM bid.
         
-        # Include all sources (only for NATIVE, not for INSTREAM)
+        TODO: This method needs to be implemented based on the actual UI workflow.
+        The user will show the manual process for this.
+        """
+        settings = campaign.settings
+        
+        # For now, we'll include all sources and use their suggested bids
+        # The actual CPM bid setting will be implemented when we document the workflow
+        logger.info("CPM bidding - using suggested bids from sources")
+        
+        # Include all sources first
         try:
             source_checkbox = self.page.locator('input.checkUncheckAll[data-table="sourceSelectionTable"]')
             if source_checkbox.is_visible(timeout=2000):
@@ -956,11 +1102,11 @@ class CampaignCreator:
                 self.page.click('button.includeBtn[data-btn-action="include"]')
                 time.sleep(0.5)
         except:
-            # INSTREAM campaigns don't have source selection
             pass
         
-        # Save & Continue
-        self._click_save_and_continue()
+        # TODO: Implement CPM bid setting per source
+        # This will be documented when the user shows the manual workflow
+        logger.warning("CPM bidding workflow not fully implemented - using default source bids")
     
     def _configure_schedule_and_budget(self, campaign: CampaignDefinition):
         """Configure schedule and budget (Step 4)."""

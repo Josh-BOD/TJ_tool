@@ -88,7 +88,11 @@ class CampaignSettings:
     gender: str = "male"
     ios_version: Optional[OSVersion] = None  # iOS version constraint
     android_version: Optional[OSVersion] = None  # Android version constraint
-    ad_format: str = "NATIVE"  # Options: "NATIVE", "INSTREAM" (legacy, used for campaign naming)
+    ad_format: str = "NATIVE"  # Options: "NATIVE", "INSTREAM" (used for campaign naming)
+    
+    # Campaign type and bidding settings
+    campaign_type: str = "Standard"  # Options: "Standard" (keyword), "Remarketing" (audience)
+    bid_type: str = "CPA"  # Options: "CPA", "CPM"
     
     # V3 From-Scratch settings (first page configuration)
     labels: List[str] = field(default_factory=list)  # Campaign labels (e.g., ["Native", "Test"])
@@ -107,12 +111,26 @@ class CampaignSettings:
             self.android_version = OSVersion(VersionOperator.ALL)
         # Normalize ad_format to uppercase
         self.ad_format = self.ad_format.upper()
+        # Normalize campaign_type to title case
+        self.campaign_type = self.campaign_type.title()
+        # Normalize bid_type to uppercase
+        self.bid_type = self.bid_type.upper()
         # Normalize new fields to lowercase
         self.device = self.device.lower()
         self.ad_format_type = self.ad_format_type.lower()
         self.format_type = self.format_type.lower()
         self.ad_type = self.ad_type.lower()
         self.content_category = self.content_category.lower()
+    
+    @property
+    def is_remarketing(self) -> bool:
+        """Check if this is a remarketing campaign."""
+        return self.campaign_type.lower() == "remarketing"
+    
+    @property
+    def is_cpm(self) -> bool:
+        """Check if this campaign uses CPM bidding."""
+        return self.bid_type.upper() == "CPM"
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
@@ -126,6 +144,8 @@ class CampaignSettings:
             "ios_version": str(self.ios_version) if self.ios_version else "All Versions",
             "android_version": str(self.android_version) if self.android_version else "All Versions",
             "ad_format": self.ad_format,
+            "campaign_type": self.campaign_type,
+            "bid_type": self.bid_type,
             # V3 From-Scratch settings
             "labels": self.labels,
             "device": self.device,
@@ -278,6 +298,8 @@ class CampaignDefinition:
             ios_version=OSVersion.parse(settings_data.get("ios_version", "All Versions")),
             android_version=OSVersion.parse(settings_data.get("android_version", "All Versions")),
             ad_format=settings_data.get("ad_format", "NATIVE"),
+            campaign_type=settings_data.get("campaign_type", "Standard"),
+            bid_type=settings_data.get("bid_type", "CPA"),
             # V3 From-Scratch settings
             labels=settings_data.get("labels", []),
             device=settings_data.get("device", "desktop"),

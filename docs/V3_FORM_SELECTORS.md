@@ -1,7 +1,5 @@
 # V3 Campaign Creation - Form Selectors
 
-> ⚠️ **TODO:** Come back and fix the V3 from-scratch campaign creation script. Currently having issues with selecting form fields. Need to debug why `force=True` clicks aren't working reliably.
-
 This document contains the HTML selectors for the first-page form fields when creating a campaign from scratch.
 
 URL: `https://advertiser.trafficjunky.com/campaign/drafts/bid/create`
@@ -119,7 +117,7 @@ Trans
 <span class="btn btn-secondary button buttonRadiusRight" data-show-button-on="platform_all platform_desktop platform_mobile ad_format_display ad_format_video ad_format_pop ad_format_tab format_type_banner format_type_scrollable format_type_native ad_type_dynamic_vast ad_type_epom ad_type_iframe ad_type_rollover ad_type_source_id ad_type_static ad_type_static_vast ad_type_video_banner ad_type_video_file ad_dimension_5 ad_dimension_9 ad_dimension_25 ad_dimension_38 ad_dimension_55 ad_dimension_70 ad_dimension_80 ad_dimension_221 ad_dimension_9651 ad_dimension_9731 ad_dimension_9771 ad_dimension_9781">Trans<input type="radio" name="content_category_id" value="trans" data-toggle-target="content_category_trans" data-enable-on="platform_all platform_desktop platform_mobile ad_format_display ad_format_video ad_format_pop ad_format_tab format_type_banner format_type_scrollable format_type_native ad_type_dynamic_vast ad_type_epom ad_type_iframe ad_type_rollover ad_type_source_id ad_type_static ad_type_static_vast ad_type_video_banner ad_type_video_file ad_dimension_5 ad_dimension_9 ad_dimension_25 ad_dimension_38 ad_dimension_55 ad_dimension_70 ad_dimension_80 ad_dimension_221 ad_dimension_9651 ad_dimension_9731 ad_dimension_9771 ad_dimension_9781"></span>
 ```
 
-**Status:** ⚠️ Code added but needs testing - `input[name="content_category_id"][value="straight|gay|trans"]`
+**Status:** ❌ Needs selector
 
 ---
 

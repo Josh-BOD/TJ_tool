@@ -9,12 +9,18 @@ CSV Format:
 
 Required Columns:
 - group: Campaign group name (e.g., "Milfs", "Cougars")
-- keywords: Semicolon-separated list (e.g., "milf;milfs;milf porn")
+- keywords: Semicolon-separated list (e.g., "milf;milfs;milf porn") - optional for remarketing
 - csv_file: Path to ad CSV file
-- variants: Comma-separated device types (e.g., "desktop,ios,android")
+- variants: Comma-separated device types (e.g., "desktop,ios,android,all mobile")
 - enabled: TRUE/FALSE to enable/disable this row
 
 Optional Columns:
+- campaign_type: "Standard" or "Remarketing" (default: "Standard")
+  - Standard: Uses keyword targeting templates
+  - Remarketing: Uses remarketing/retargeting templates
+- bid_type: "CPA" or "CPM" (default: "CPA")
+  - CPA: Cost Per Action bidding (uses Target CPA, Per Source Budget, Max Bid)
+  - CPM: Cost Per Mille bidding (uses suggested CPM bids from sources)
 - keyword_matches: Only specify "broad" for keywords that need it
   Examples:
     - "broad" = first keyword is broad, rest are exact
@@ -24,8 +30,8 @@ Optional Columns:
 - geo: Semicolon-separated geos for ONE campaign (e.g., "US;CA;UK")
 - multi_geo: Semicolon-separated geos to create SEPARATE campaigns (e.g., "CA;AUS")
   Note: Use either 'geo' OR 'multi_geo', not both
-- target_cpa: Target CPA (default: 50.0)
-- per_source_budget: Per-source test budget (default: 200.0)
+- target_cpa: Target CPA (default: 50.0) - only used for CPA bid_type
+- per_source_budget: Per-source test budget (default: 200.0) - only used for CPA bid_type
 - max_bid: Maximum bid (default: 10.0)
 - frequency_cap: Frequency cap (default: 2)
 - max_daily_budget: Maximum daily budget (default: 250.0)
@@ -58,6 +64,18 @@ Examples:
    keywords: "milf;milfs;milf porn;cougar;older woman"
    keyword_matches: "broad;broad"
    Result: First 2 are broad, last 3 are exact
+
+4. Remarketing campaign with CPM bidding:
+   group,keywords,ad_format,campaign_type,bid_type,variants,csv_file,enabled
+   Milfs,,NATIVE,Remarketing,CPM,"desktop,all mobile",ads.csv,TRUE
+   
+   Result: Remarketing campaigns using CPM bidding (no keywords needed)
+
+5. Remarketing campaign with keywords (hybrid):
+   group,keywords,ad_format,campaign_type,bid_type,variants,csv_file,enabled
+   Milfs,"milf;milfs",NATIVE,Remarketing,CPA,"desktop,all mobile",ads.csv,TRUE
+   
+   Result: Remarketing campaigns with additional keyword targeting
 """
 
 import csv
@@ -114,6 +132,8 @@ class CSVParser:
         "ios_version": "",  # iOS version constraint (e.g., ">18.4" or "18.4")
         "android_version": "",  # Android version constraint (e.g., ">11.0" or "11.0")
         "ad_format": "NATIVE",  # Options: "NATIVE", "INSTREAM" (default: NATIVE for V1 compatibility)
+        "campaign_type": "Standard",  # Options: "Standard", "Remarketing"
+        "bid_type": "CPA",  # Options: "CPA", "CPM"
         "t": "",  # Test number (e.g., "12" becomes "_T-12" in campaign name)
         # V3 From-Scratch columns
         "labels": "",  # Comma-separated labels (e.g., "Native,Test")
@@ -124,6 +144,10 @@ class CSVParser:
         "ad_dimensions": "640x360",  # Options: "300x250", "950x250", "468x60", "305x99", "300x100", "970x90", "320x480", "640x360"
         "content_category": "straight",  # Options: "straight", "gay", "trans"
     }
+    
+    # Valid values for campaign type and bidding
+    VALID_CAMPAIGN_TYPES = {"standard", "remarketing"}
+    VALID_BID_TYPES = {"cpa", "cpm"}
     
     # Valid values for V3 columns
     VALID_DEVICES = {"all", "desktop", "mobile"}
@@ -314,6 +338,21 @@ class CSVParser:
             "straight"
         )
         
+        # Parse campaign_type and bid_type with validation
+        campaign_type = self._parse_validated_field(
+            row.get("campaign_type", "Standard"),
+            self.VALID_CAMPAIGN_TYPES,
+            "campaign_type",
+            "standard"
+        ).title()  # Convert to title case (Standard, Remarketing)
+        
+        bid_type = self._parse_validated_field(
+            row.get("bid_type", "CPA"),
+            self.VALID_BID_TYPES,
+            "bid_type",
+            "cpa"
+        ).upper()  # Convert to uppercase (CPA, CPM)
+        
         # Parse settings (same for all campaigns)
         settings = CampaignSettings(
             target_cpa=self._parse_float(
@@ -340,6 +379,8 @@ class CSVParser:
             ios_version=OSVersion.parse(row.get("ios_version", "")),
             android_version=OSVersion.parse(row.get("android_version", "")),
             ad_format=row.get("ad_format", DEFAULT_SETTINGS["ad_format"]).upper(),  # Parse ad_format from CSV
+            campaign_type=campaign_type,
+            bid_type=bid_type,
             # V3 From-Scratch settings
             labels=labels,
             device=device,
@@ -503,10 +544,11 @@ class CSVParser:
         
         Supports:
         - "desktop", "ios", "android"
-        - "all mobile" - expands to ["ios", "android"] with mobile_combined flag
+        - "all mobile" or "all_mobile" - creates a single campaign targeting both iOS and Android
         
         The "all mobile" variant is used to create campaigns with both iOS and Android
         targeting in a single campaign (naming will use MOB_ALL instead of iOS/AND).
+        For remarketing campaigns, this uses the "all_mobile" template directly.
         """
         variants_str = self._get_required(row, "variants")
         
@@ -516,8 +558,8 @@ class CSVParser:
         if not variants:
             raise CSVParseError("No variants specified")
         
-        # Validate variant names and expand "all mobile"
-        valid_variants = {"desktop", "ios", "android", "all mobile"}
+        # Validate variant names and normalize "all_mobile"/"all mobile"
+        valid_variants = {"desktop", "ios", "android", "all mobile", "all_mobile"}
         expanded_variants = []
         
         for variant in variants:
@@ -526,6 +568,10 @@ class CSVParser:
                     f"Invalid variant '{variant}'. "
                     f"Must be one of: desktop, ios, android, all mobile"
                 )
+            
+            # Normalize "all_mobile" to "all mobile" for consistency
+            if variant == "all_mobile":
+                variant = "all mobile"
             
             # "all mobile" is handled differently - mark for special processing
             # It will be expanded later when we know this campaign needs mobile_combined
