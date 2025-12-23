@@ -117,11 +117,14 @@ def generate_campaign_name(
     else:
         geo_str = geo
     
-    # Capitalize keyword for name
-    keyword_title = keyword.title().replace(" ", "")
+    # Capitalize keyword for name (use "Broad" if empty/no keyword targeting)
+    if keyword and keyword.strip() and keyword.lower() != "unknown":
+        keyword_title = keyword.title().replace(" ", "")
+    else:
+        keyword_title = "Broad"
     
-    # Convert gender to abbreviation
-    gender_map = {"male": "M", "female": "F", "all": "ALL"}
+    # Convert gender to abbreviation (ALL = MF for Male+Female)
+    gender_map = {"male": "M", "female": "F", "all": "MF"}
     gender_abbr = gender_map.get(gender.lower(), "M")
     
     # Convert device to abbreviation

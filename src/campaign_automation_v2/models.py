@@ -88,7 +88,16 @@ class CampaignSettings:
     gender: str = "male"
     ios_version: Optional[OSVersion] = None  # iOS version constraint
     android_version: Optional[OSVersion] = None  # Android version constraint
-    ad_format: str = "NATIVE"  # Options: "NATIVE", "INSTREAM"
+    ad_format: str = "NATIVE"  # Options: "NATIVE", "INSTREAM" (legacy, used for campaign naming)
+    
+    # V3 From-Scratch settings (first page configuration)
+    labels: List[str] = field(default_factory=list)  # Campaign labels (e.g., ["Native", "Test"])
+    device: str = "desktop"  # all, desktop, mobile
+    ad_format_type: str = "display"  # display, instream, pop
+    format_type: str = "native"  # banner, native (for display ads)
+    ad_type: str = "rollover"  # static_banner, video_banner, rollover
+    ad_dimensions: str = "640x360"  # 300x250, 950x250, 468x60, 305x99, 300x100, 970x90, 320x480, 640x360
+    content_category: str = "straight"  # straight, gay, trans
     
     def __post_init__(self):
         """Initialize version constraints if not set."""
@@ -98,6 +107,12 @@ class CampaignSettings:
             self.android_version = OSVersion(VersionOperator.ALL)
         # Normalize ad_format to uppercase
         self.ad_format = self.ad_format.upper()
+        # Normalize new fields to lowercase
+        self.device = self.device.lower()
+        self.ad_format_type = self.ad_format_type.lower()
+        self.format_type = self.format_type.lower()
+        self.ad_type = self.ad_type.lower()
+        self.content_category = self.content_category.lower()
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
@@ -110,7 +125,15 @@ class CampaignSettings:
             "gender": self.gender,
             "ios_version": str(self.ios_version) if self.ios_version else "All Versions",
             "android_version": str(self.android_version) if self.android_version else "All Versions",
-            "ad_format": self.ad_format
+            "ad_format": self.ad_format,
+            # V3 From-Scratch settings
+            "labels": self.labels,
+            "device": self.device,
+            "ad_format_type": self.ad_format_type,
+            "format_type": self.format_type,
+            "ad_type": self.ad_type,
+            "ad_dimensions": self.ad_dimensions,
+            "content_category": self.content_category
         }
 
 
@@ -254,7 +277,15 @@ class CampaignDefinition:
             gender=settings_data.get("gender", "male"),
             ios_version=OSVersion.parse(settings_data.get("ios_version", "All Versions")),
             android_version=OSVersion.parse(settings_data.get("android_version", "All Versions")),
-            ad_format=settings_data.get("ad_format", "NATIVE")
+            ad_format=settings_data.get("ad_format", "NATIVE"),
+            # V3 From-Scratch settings
+            labels=settings_data.get("labels", []),
+            device=settings_data.get("device", "desktop"),
+            ad_format_type=settings_data.get("ad_format_type", "display"),
+            format_type=settings_data.get("format_type", "native"),
+            ad_type=settings_data.get("ad_type", "rollover"),
+            ad_dimensions=settings_data.get("ad_dimensions", "640x360"),
+            content_category=settings_data.get("content_category", "straight")
         )
         
         # Parse variant statuses

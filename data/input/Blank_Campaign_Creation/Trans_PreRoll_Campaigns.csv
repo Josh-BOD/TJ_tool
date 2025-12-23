@@ -1,0 +1,2 @@
+group,keywords,keyword_matches,gender,geo,multi_geo,csv_file,target_cpa,per_source_budget,max_bid,frequency_cap,max_daily_budget,variants,ios_version,android_version,ad_format,enabled,test_number,labels,device,ad_format_type,format_type,ad_type,ad_dimensions,content_category
+Trans,trans,,all,NL,,NL_PreRoll_Trans_10Dec25.csv,50,100,10,2,50,desktop,,,INSTREAM,TRUE,10,PreRoll,desktop,instream,,,,trans

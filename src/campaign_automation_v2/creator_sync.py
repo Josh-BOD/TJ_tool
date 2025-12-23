@@ -229,6 +229,358 @@ class CampaignCreator:
             raise CampaignCreationError(f"Failed to create Android campaign: {str(e)}")
     
     # =========================================================================
+    # V3 From-Scratch Campaign Creation
+    # =========================================================================
+    
+    def create_campaign_from_scratch(
+        self,
+        campaign: CampaignDefinition,
+        device_variant: str = "desktop"
+    ) -> Tuple[str, str]:
+        """
+        Create a campaign from scratch (not from template).
+        
+        This allows full control over all first-page settings that are locked
+        when cloning from a template.
+        
+        Args:
+            campaign: Campaign definition with settings
+            device_variant: "desktop", "ios", or "android" (for naming)
+            
+        Returns:
+            Tuple of (campaign_id, campaign_name)
+            
+        Raises:
+            CampaignCreationError: If creation fails
+        """
+        keyword = campaign.primary_keyword
+        settings = campaign.settings
+        
+        # Generate campaign name
+        campaign_name = generate_campaign_name(
+            geo=campaign.geo,
+            language=DEFAULT_SETTINGS["language"],
+            ad_format=self.ad_format,
+            bid_type=DEFAULT_SETTINGS["bid_type"],
+            source=DEFAULT_SETTINGS["source"],
+            keyword=keyword,
+            device=device_variant,
+            gender=settings.gender,
+            mobile_combined=campaign.mobile_combined,
+            test_number=campaign.test_number
+        )
+        
+        try:
+            # Navigate to create campaign page
+            logger.info(f"Navigating to create campaign page...")
+            self.page.goto(f"{self.BASE_URL}/campaign/drafts/bid/create")
+            self.page.wait_for_load_state("networkidle")
+            time.sleep(1)
+            
+            # Step 1: Configure all first-page settings
+            logger.info(f"Configuring basic settings...")
+            self._configure_first_page_settings(campaign_name, campaign, device_variant)
+            
+            # Extract campaign ID from URL after save
+            campaign_id = self.page.url.split("/campaign/")[1].split("/")[0].split("?")[0]
+            logger.info(f"Campaign created with ID: {campaign_id}")
+            
+            # Step 2: Configure geo targeting
+            logger.info(f"Configuring geo targeting...")
+            self._configure_geo(campaign.geo)
+            
+            # Step 2b: Configure OS targeting for mobile
+            variant_lower = device_variant.lower().strip()
+            if variant_lower in ("ios", "android", "mobile", "all mobile"):
+                logger.info(f"Configuring OS targeting...")
+                if campaign.mobile_combined or variant_lower in ("mobile", "all mobile"):
+                    # Target both iOS and Android
+                    self._configure_os_targeting(
+                        ["iOS", "Android"],
+                        settings.ios_version,
+                        settings.android_version
+                    )
+                elif variant_lower == "ios":
+                    self._configure_os_targeting(["iOS"], settings.ios_version)
+                elif variant_lower == "android":
+                    self._configure_os_targeting(["Android"], android_version=settings.android_version)
+            
+            # Step 2c: Save & Continue (geo/audience page)
+            self._click_save_and_continue()
+            
+            # Step 3: Configure keywords
+            logger.info(f"Configuring keywords...")
+            self._configure_keywords(campaign.keywords)
+            
+            # Step 4: Configure tracking and bids
+            logger.info(f"Configuring tracking and bids...")
+            self._configure_tracking_and_bids(campaign)
+            
+            # Step 5: Configure schedule and budget
+            logger.info(f"Configuring schedule and budget...")
+            self._configure_schedule_and_budget(campaign)
+            
+            # Now on ads page - ready for CSV upload
+            logger.info(f"✓ Campaign {campaign_name} created successfully")
+            
+            return campaign_id, campaign_name
+            
+        except Exception as e:
+            raise CampaignCreationError(f"Failed to create campaign from scratch: {str(e)}")
+    
+    def _configure_first_page_settings(
+        self,
+        campaign_name: str,
+        campaign: CampaignDefinition,
+        device_variant: str
+    ):
+        """
+        Configure all settings on the first page (Basic Settings).
+        
+        This is for V3 from-scratch creation where we have full control.
+        """
+        settings = campaign.settings
+        
+        # 1. Campaign Name
+        logger.info(f"  Setting campaign name: {campaign_name}")
+        self.page.fill('input[name="name"]', campaign_name)
+        time.sleep(0.3)
+        
+        # 2. Content Rating - Always NSFW
+        logger.info(f"  Setting content rating: NSFW")
+        try:
+            # Click NSFW radio button label
+            self.page.click('label:has(input[value="nsfw"])')
+        except:
+            # Try alternate selector
+            try:
+                self.page.click('label:has-text("NSFW")')
+            except:
+                logger.warning("Could not set NSFW - may already be selected")
+        time.sleep(0.3)
+        
+        # 3. Group
+        logger.info(f"  Setting group: {campaign.group}")
+        self._select_or_create_group(campaign.group)
+        
+        # 4. Labels (if any)
+        if settings.labels:
+            logger.info(f"  Setting labels: {settings.labels}")
+            self._set_labels(settings.labels)
+        
+        # 5. Device (All / Desktop / Mobile)
+        device_setting = settings.device
+        # Override based on device_variant if needed
+        variant_lower = device_variant.lower().strip()
+        if variant_lower == "desktop":
+            device_setting = "desktop"
+        elif variant_lower in ("ios", "android", "mobile", "all mobile"):
+            device_setting = "mobile"
+
+        logger.info(f"  Setting device: {device_setting}")
+        self._set_device(device_setting)
+        
+        # 6. Ad Format (Display / In-Stream Video / Pop)
+        logger.info(f"  Setting ad format type: {settings.ad_format_type}")
+        self._set_ad_format_type(settings.ad_format_type)
+        time.sleep(0.5)  # Wait for dependent fields to update
+        
+        # 7. Format Type (Banner / Native) - only for Display
+        if settings.ad_format_type == "display":
+            logger.info(f"  Setting format type: {settings.format_type}")
+            self._set_format_type(settings.format_type)
+            time.sleep(0.3)
+        
+        # 8. Ad Type
+        logger.info(f"  Setting ad type: {settings.ad_type}")
+        self._set_ad_type(settings.ad_type)
+        time.sleep(0.3)
+        
+        # 9. Ad Dimensions
+        logger.info(f"  Setting ad dimensions: {settings.ad_dimensions}")
+        self._set_ad_dimensions(settings.ad_dimensions)
+        time.sleep(0.3)
+        
+        # 10. Content Category (Straight / Gay / Trans)
+        logger.info(f"  Setting content category: {settings.content_category}")
+        self._set_content_category(settings.content_category)
+        
+        # 11. Gender (Demographic Targeting)
+        logger.info(f"  Setting gender: {settings.gender}")
+        self._set_gender(settings.gender)
+        
+        # Save & Continue to next step
+        logger.info(f"  Saving basic settings...")
+        self._click_save_and_continue()
+    
+    def _set_labels(self, labels: List[str]):
+        """Set campaign labels (multi-select)."""
+        try:
+            # Find and click the labels input field directly
+            labels_input = self.page.locator('input.select2-search__field[placeholder="Select or Input a Label"]')
+            labels_input.click()
+            time.sleep(0.5)
+            
+            for label in labels:
+                # Type label in search field
+                labels_input.fill(label)
+                time.sleep(0.5)
+                
+                # Click on matching result or press Enter to create new
+                try:
+                    # Wait for dropdown option to appear
+                    option = self.page.locator('li.select2-results__option').first
+                    option.wait_for(state='visible', timeout=2000)
+                    option.click()
+                    time.sleep(0.3)
+                except:
+                    # If no option found, press Enter to create the label
+                    self.page.keyboard.press("Enter")
+                    logger.info(f"Created new label: {label}")
+                    time.sleep(0.3)
+            
+            # Close dropdown
+            self.page.keyboard.press("Escape")
+            time.sleep(0.3)
+        except Exception as e:
+            logger.warning(f"Could not set labels: {e}")
+    
+    def _set_device(self, device: str):
+        """Set device targeting (All / Desktop / Mobile)."""
+        # Maps to: input[name="platform_id"] with value 1=All, 2=Desktop, 3=Mobile
+        device_map = {
+            "all": "1",
+            "desktop": "2",
+            "mobile": "3"
+        }
+        
+        value = device_map.get(device.lower(), "2")  # Default to desktop
+        selector = f'input[name="platform_id"][value="{value}"]'
+        
+        try:
+            # Wait for the element to be present
+            self.page.wait_for_selector(selector, timeout=5000)
+            time.sleep(0.3)
+            
+            # Click the parent span/label since radio inputs can be hidden
+            element = self.page.locator(selector)
+            element.click(force=True)
+            logger.info(f"  ✓ Set device: {device}")
+        except Exception as e:
+            logger.warning(f"Could not set device to {device}: {e}")
+    
+    def _set_ad_format_type(self, ad_format_type: str):
+        """Set ad format type (Display / In-Stream Video / Pop)."""
+        # Maps to: input[name="ad_format_id"] with value 1=Display, 2=In-Stream Video, 3=Pop
+        format_map = {
+            "display": "1",
+            "instream": "2",
+            "pop": "3"
+        }
+        
+        value = format_map.get(ad_format_type.lower(), "1")  # Default to Display
+        selector = f'input[name="ad_format_id"][value="{value}"]'
+        
+        try:
+            self.page.wait_for_selector(selector, timeout=5000)
+            time.sleep(0.3)
+            self.page.locator(selector).click(force=True)
+            logger.info(f"  ✓ Set ad format type: {ad_format_type}")
+            time.sleep(0.5)  # Wait for dependent fields to update
+        except Exception as e:
+            logger.warning(f"Could not set ad format type to {ad_format_type}: {e}")
+    
+    def _set_format_type(self, format_type: str):
+        """Set format type (Banner / Native) - for Display ads only."""
+        # Maps to: input[name="format_type_id"] with value 4=Banner, 5=Native
+        format_map = {
+            "banner": "4",
+            "native": "5"
+        }
+        
+        value = format_map.get(format_type.lower(), "5")  # Default to Native
+        selector = f'input[name="format_type_id"][value="{value}"]'
+        
+        try:
+            self.page.wait_for_selector(selector, timeout=5000)
+            time.sleep(0.3)
+            self.page.locator(selector).click(force=True)
+            logger.info(f"  ✓ Set format type: {format_type}")
+            time.sleep(0.3)
+        except Exception as e:
+            logger.warning(f"Could not set format type to {format_type}: {e}")
+    
+    def _set_ad_type(self, ad_type: str):
+        """Set ad type (Static Banner / Video Banner / Rollover / Video File)."""
+        # Maps to: input[name="ad_type_id"]
+        # 1=Static Banner, 2=Video Banner, 5=Video File (PreRoll), 9=Rollover (Native)
+        type_map = {
+            "static_banner": "1",
+            "video_banner": "2",
+            "video_file": "5",
+            "rollover": "9"
+        }
+        
+        value = type_map.get(ad_type.lower(), "9")  # Default to Rollover
+        selector = f'input[name="ad_type_id"][value="{value}"]'
+        
+        try:
+            self.page.wait_for_selector(selector, timeout=5000)
+            time.sleep(0.3)
+            self.page.locator(selector).click(force=True)
+            logger.info(f"  ✓ Set ad type: {ad_type}")
+            time.sleep(0.3)
+        except Exception as e:
+            logger.warning(f"Could not set ad type to {ad_type}: {e}")
+    
+    def _set_ad_dimensions(self, ad_dimensions: str):
+        """Set ad dimensions."""
+        # Maps to: input[name="ad_dimension_id"]
+        # Normalize input to lowercase without spaces
+        dim_normalized = ad_dimensions.lower().replace(" ", "").replace("x", "x")
+        
+        dimension_map = {
+            "300x250": "9",
+            "950x250": "5",
+            "468x60": "25",
+            "305x99": "55",
+            "300x100": "80",
+            "970x90": "221",
+            "320x480": "9771",
+            "640x360": "9731",  # Native Rollover/Static Banner
+        }
+        
+        value = dimension_map.get(dim_normalized, "9")  # Default to 300x250
+        selector = f'input[name="ad_dimension_id"][value="{value}"]'
+        
+        try:
+            self.page.wait_for_selector(selector, timeout=5000)
+            time.sleep(0.3)
+            self.page.locator(selector).click(force=True)
+            logger.info(f"  ✓ Set ad dimensions: {ad_dimensions}")
+            time.sleep(0.3)
+        except Exception as e:
+            logger.warning(f"Could not set ad dimensions to {ad_dimensions}: {e}")
+    
+    def _set_content_category(self, content_category: str):
+        """Set content category (Straight / Gay / Trans)."""
+        # Maps to: input[name="content_category_id"] with value straight/gay/trans
+        value = content_category.lower()
+        if value not in ["straight", "gay", "trans"]:
+            value = "straight"  # Default
+        
+        selector = f'input[name="content_category_id"][value="{value}"]'
+        
+        try:
+            self.page.wait_for_selector(selector, timeout=5000)
+            time.sleep(0.3)
+            self.page.locator(selector).click(force=True)
+            logger.info(f"  ✓ Set content category: {content_category}")
+            time.sleep(0.3)
+        except Exception as e:
+            logger.warning(f"Could not set content category to {content_category}: {e}")
+    
+    # =========================================================================
     # Internal helper methods
     # =========================================================================
     
@@ -304,11 +656,16 @@ class CampaignCreator:
     
     def _select_or_create_group(self, group_name: str):
         """Select existing group or create new one."""
+        # Skip if General - it's pre-selected by default
+        if group_name.lower() == "general":
+            logger.info(f"  ✓ Group: General (pre-selected)")
+            return
+        
         try:
             # Open group dropdown
             self.page.click('span.select2-selection[aria-labelledby="select2-group_id-container"]')
             time.sleep(0.5)
-            
+
             # Search for group
             self.page.fill('input.select2-search__field', group_name)
             time.sleep(0.5)
@@ -353,16 +710,25 @@ class CampaignCreator:
                 pass
     
     def _set_gender(self, gender: str):
-        """Set gender targeting."""
+        """Set gender/demographic targeting (All / Male / Female)."""
+        # Maps to: input[name="demographic_targeting_id"] with value 1=All, 2=Male, 3=Female
         gender_map = {
-            "male": "demographic_male",
-            "female": "demographic_female",
-            "all": "demographic_all"
+            "all": "1",
+            "male": "2",
+            "female": "3"
         }
         
-        gender_id = gender_map.get(gender.lower(), "demographic_male")
-        # Click the label instead of the input (label wraps the input)
-        self.page.click(f'label:has(input#{gender_id})')
+        value = gender_map.get(gender.lower(), "1")  # Default to All
+        selector = f'input[name="demographic_targeting_id"][value="{value}"]'
+        
+        try:
+            self.page.wait_for_selector(selector, timeout=5000)
+            time.sleep(0.3)
+            self.page.locator(selector).click(force=True)
+            logger.info(f"  ✓ Set gender: {gender}")
+            time.sleep(0.3)
+        except Exception as e:
+            logger.warning(f"Could not set gender to {gender}: {e}")
     
     def _configure_geo(self, geo_list: List[str]):
         """

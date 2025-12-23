@@ -30,6 +30,15 @@ Optional Columns:
 - frequency_cap: Frequency cap (default: 2)
 - max_daily_budget: Maximum daily budget (default: 250.0)
 
+V3 From-Scratch Columns (for creating campaigns without templates):
+- labels: Comma-separated labels (e.g., "Native,Test") (default: empty)
+- device: "all", "desktop", or "mobile" (default: "desktop")
+- ad_format_type: "display", "instream", or "pop" (default: "display")
+- format_type: "banner" or "native" (default: "native")
+- ad_type: "static_banner", "video_banner", or "rollover" (default: "rollover")
+- ad_dimensions: Ad size (e.g., "640x360", "300x250") (default: "640x360")
+- content_category: "straight", "gay", or "trans" (default: "straight")
+
 Examples:
 ---------
 
@@ -83,10 +92,9 @@ class CSVParseError(Exception):
 class CSVParser:
     """Parser for campaign definition CSV files."""
     
-    # Required columns
+    # Required columns (keywords is now optional for campaigns without keyword targeting)
     REQUIRED_COLUMNS = {
         "group",
-        "keywords",
         "csv_file",
         "variants",
         "enabled"
@@ -106,7 +114,55 @@ class CSVParser:
         "ios_version": "",  # iOS version constraint (e.g., ">18.4" or "18.4")
         "android_version": "",  # Android version constraint (e.g., ">11.0" or "11.0")
         "ad_format": "NATIVE",  # Options: "NATIVE", "INSTREAM" (default: NATIVE for V1 compatibility)
-        "t": ""  # Test number (e.g., "12" becomes "_T-12" in campaign name)
+        "t": "",  # Test number (e.g., "12" becomes "_T-12" in campaign name)
+        # V3 From-Scratch columns
+        "labels": "",  # Comma-separated labels (e.g., "Native,Test")
+        "device": "desktop",  # Options: "all", "desktop", "mobile"
+        "ad_format_type": "display",  # Options: "display", "instream", "pop"
+        "format_type": "native",  # Options: "banner", "native"
+        "ad_type": "rollover",  # Options: "static_banner", "video_banner", "rollover"
+        "ad_dimensions": "640x360",  # Options: "300x250", "950x250", "468x60", "305x99", "300x100", "970x90", "320x480", "640x360"
+        "content_category": "straight",  # Options: "straight", "gay", "trans"
+    }
+    
+    # Valid values for V3 columns
+    VALID_DEVICES = {"all", "desktop", "mobile"}
+    VALID_AD_FORMAT_TYPES = {"display", "instream", "pop"}
+    # Format types: for Display (banner/native), for PreRoll (video file, n/a)
+    VALID_FORMAT_TYPES = {"banner", "native", "video file", "n/a", ""}
+    # Ad types: for Display (static_banner/video_banner/rollover), for PreRoll (video_file)
+    VALID_AD_TYPES = {"static_banner", "video_banner", "rollover", "video_file", "in-stream video", "preroll", "pre-roll", "video file", ""}
+    # Ad dimensions: Display sizes + PreRoll sizes
+    VALID_AD_DIMENSIONS = {
+        # Display/Native dimensions
+        "300x250", "950x250", "468x60", "305x99", "300x100", "970x90", "320x480", "640x360",
+        # PreRoll dimensions
+        "pre-roll (16:9)", "preroll (16:9)", "16:9"
+    }
+    VALID_CONTENT_CATEGORIES = {"straight", "gay", "trans"}
+    
+    # Mappings from user-friendly names to internal values
+    AD_FORMAT_TYPE_MAP = {
+        "in-stream video": "instream",
+        "in-stream": "instream",
+        "preroll": "instream",
+        "pre-roll": "instream",
+    }
+    FORMAT_TYPE_MAP = {
+        "video file": "video file",  # Keep as-is for PreRoll
+        "n/a": "",
+    }
+    AD_TYPE_MAP = {
+        "in-stream video": "video_file",  # PreRoll uses video_file
+        "video file": "video_file",
+        "preroll": "video_file",
+        "pre-roll": "video_file",
+    }
+    AD_DIMENSIONS_MAP = {
+        "pre-roll (16:9)": "640x360",  # PreRoll uses 640x360
+        "preroll (16:9)": "640x360",
+        "16:9": "640x360",
+        "640x360": "640x360",
     }
     
     def __init__(self, csv_path: Path):
@@ -215,6 +271,49 @@ class CSVParser:
         # Check if multi_geo is specified
         multi_geo_str = row.get("multi_geo", "").strip()
         
+        # Parse V3 columns with validation
+        labels = self._parse_labels(row.get("labels", ""))
+        device = self._parse_validated_field(
+            row.get("device", "desktop").lower(),
+            self.VALID_DEVICES,
+            "device",
+            "desktop"
+        )
+        ad_format_type = self._parse_validated_field(
+            row.get("ad_format_type", "display").lower(),
+            self.VALID_AD_FORMAT_TYPES,
+            "ad_format_type",
+            "display",
+            self.AD_FORMAT_TYPE_MAP
+        )
+        format_type = self._parse_validated_field(
+            row.get("format_type", "native").lower(),
+            self.VALID_FORMAT_TYPES,
+            "format_type",
+            "native",
+            self.FORMAT_TYPE_MAP
+        )
+        ad_type = self._parse_validated_field(
+            row.get("ad_type", "rollover").lower(),
+            self.VALID_AD_TYPES,
+            "ad_type",
+            "rollover",
+            self.AD_TYPE_MAP
+        )
+        ad_dimensions = self._parse_validated_field(
+            row.get("ad_dimensions", "640x360").lower(),
+            self.VALID_AD_DIMENSIONS,
+            "ad_dimensions",
+            "640x360",
+            self.AD_DIMENSIONS_MAP
+        )
+        content_category = self._parse_validated_field(
+            row.get("content_category", "straight").lower(),
+            self.VALID_CONTENT_CATEGORIES,
+            "content_category",
+            "straight"
+        )
+        
         # Parse settings (same for all campaigns)
         settings = CampaignSettings(
             target_cpa=self._parse_float(
@@ -240,7 +339,15 @@ class CSVParser:
             gender=row.get("gender", DEFAULT_SETTINGS["gender"]).lower(),
             ios_version=OSVersion.parse(row.get("ios_version", "")),
             android_version=OSVersion.parse(row.get("android_version", "")),
-            ad_format=row.get("ad_format", DEFAULT_SETTINGS["ad_format"]).upper()  # Parse ad_format from CSV
+            ad_format=row.get("ad_format", DEFAULT_SETTINGS["ad_format"]).upper(),  # Parse ad_format from CSV
+            # V3 From-Scratch settings
+            labels=labels,
+            device=device,
+            ad_format_type=ad_format_type,
+            format_type=format_type,
+            ad_type=ad_type,
+            ad_dimensions=ad_dimensions,
+            content_category=content_category
         )
         
         # Parse test number (can be numeric or alphanumeric like "12", "12A", "V2", etc.)
@@ -320,25 +427,27 @@ class CSVParser:
     def _parse_keywords(self, row: Dict[str, str]) -> List[Keyword]:
         """
         Parse keywords and match types.
-        
+
         Match types are simplified:
         - Only specify "broad" for keywords that need it
         - All remaining keywords default to "exact"
-        
+
         Examples:
         - keywords: "milf;milfs;milf porn;cougar;older woman"
         - keyword_matches: "broad;broad" -> first 2 are broad, rest are exact
         - keyword_matches: "broad" -> first 1 is broad, rest are exact
         - keyword_matches: "" or not provided -> all are exact
+        - keywords: "" or not provided -> no keyword targeting (empty list)
         """
-        keywords_str = self._get_required(row, "keywords")
+        keywords_str = row.get("keywords", "").strip()
         matches_str = row.get("keyword_matches", "").strip()
-        
+
         # Split keywords by semicolon
         keyword_names = [k.strip() for k in keywords_str.split(";") if k.strip()]
-        
+
+        # Keywords are now optional - return empty list if none specified
         if not keyword_names:
-            raise CSVParseError("No keywords specified")
+            return []
         
         # Split match types by semicolon (only the ones specified as broad)
         if matches_str:
@@ -456,6 +565,40 @@ class CSVParser:
             return int(value.strip())
         except ValueError:
             raise CSVParseError(f"Invalid integer: {value}")
+    
+    def _parse_labels(self, value: str) -> List[str]:
+        """Parse comma-separated labels."""
+        if not value or not value.strip():
+            return []
+        
+        # Split by comma and strip whitespace
+        labels = [l.strip() for l in value.split(",") if l.strip()]
+        return labels
+    
+    def _parse_validated_field(
+        self, 
+        value: str, 
+        valid_values: set, 
+        field_name: str,
+        default: str,
+        value_map: dict = None
+    ) -> str:
+        """Parse a field and validate against allowed values, with optional mapping."""
+        if not value or not value.strip():
+            return default
+        
+        value = value.strip().lower()
+        
+        # Apply mapping if provided
+        if value_map and value in value_map:
+            value = value_map[value]
+        
+        if value not in valid_values:
+            raise CSVParseError(
+                f"Invalid {field_name} '{value}'. "
+                f"Must be one of: {', '.join(sorted(valid_values))}"
+            )
+        return value
 
 
 def parse_csv(csv_path: Path) -> CampaignBatch:
