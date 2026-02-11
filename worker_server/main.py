@@ -119,12 +119,12 @@ def create_job(req: CreateJobRequest):
 
     job_id = str(uuid.uuid4())
 
-    # Write CSV to the path the script actually reads from:
-    # create_campaigns_v2_sync.py uses WORKER_ID env var to construct
-    # data/temp/temp_batch_{WORKER_ID}.csv — it ignores the --input flag
-    temp_dir = TJ_TOOL_DIR / "data" / "temp"
-    temp_dir.mkdir(parents=True, exist_ok=True)
-    csv_path = temp_dir / "temp_batch_galactus.csv"
+    # Write CSV into Multilingual_Campaign_Creation dir so the script
+    # resolves ad CSV paths (csv_file column) relative to this directory.
+    # create_campaigns_v2_sync.py sets csv_dir = input_file.parent
+    input_dir = TJ_TOOL_DIR / "data" / "input" / "Multilingual_Campaign_Creation"
+    input_dir.mkdir(parents=True, exist_ok=True)
+    csv_path = input_dir / "temp_batch_galactus.csv"
     csv_path.write_text(req.csv_content)
 
     # Count expected campaigns from CSV (lines minus header)
