@@ -31,7 +31,7 @@ TJ_TOOL_DIR = Path(__file__).parent.parent
 CAMPAIGN_CREATION_DIR = TJ_TOOL_DIR / "data" / "input" / "Campaign_Creation"
 MULTILINGUAL_DIR = TJ_TOOL_DIR / "data" / "input" / "Multilingual_Campaign_Creation"
 MULTILINGUAL_SCRIPT = TJ_TOOL_DIR / "create_multilingual.py"
-STANDARD_SCRIPT = TJ_TOOL_DIR / "create_campaigns_v3_scratch.py"
+STANDARD_SCRIPT = TJ_TOOL_DIR / "create_campaigns_v2_sync.py"
 
 
 def _get_ad_csvs() -> dict[str, list[str]]:
@@ -100,7 +100,7 @@ def _build_command(csv_path: str, csv_content: str, dry_run: bool) -> list[str]:
     else:
         cmd = [
             "python", str(STANDARD_SCRIPT),
-            csv_path,
+            "--input", csv_path,
         ]
         if dry_run:
             cmd.append("--dry-run")
