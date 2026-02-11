@@ -6,7 +6,6 @@ Runs on Mac Mini Pros to execute create_campaigns_v2_sync.py jobs.
 import os
 import socket
 import subprocess
-import tempfile
 import threading
 import uuid
 from collections import deque
@@ -120,16 +119,12 @@ def create_job(req: CreateJobRequest):
 
     job_id = str(uuid.uuid4())
 
-    # Write CSV content to temp file
-    tmp = tempfile.NamedTemporaryFile(
-        mode="w",
-        suffix=".csv",
-        prefix=f"galactus_{job_id[:8]}_",
-        dir=str(TJ_TOOL_DIR / "data" / "input"),
-        delete=False,
-    )
-    tmp.write(req.csv_content)
-    tmp.close()
+    # Write CSV content to the path the script expects
+    # create_campaigns_v2_sync.py with --input reads from this path
+    input_dir = TJ_TOOL_DIR / "data" / "input"
+    input_dir.mkdir(parents=True, exist_ok=True)
+    csv_path = input_dir / f"galactus_{job_id[:8]}.csv"
+    csv_path.write_text(req.csv_content)
 
     # Count expected campaigns from CSV (lines minus header)
     lines = [l for l in req.csv_content.strip().split("\n") if l.strip()]
@@ -138,7 +133,7 @@ def create_job(req: CreateJobRequest):
     with job_lock:
         jobs[job_id] = {
             "status": "pending",
-            "csv_path": tmp.name,
+            "csv_path": str(csv_path),
             "dry_run": req.dry_run,
             "campaigns_created": 0,
             "total_campaigns": total_campaigns,
@@ -148,7 +143,7 @@ def create_job(req: CreateJobRequest):
         }
 
     # Launch in background thread
-    thread = threading.Thread(target=_run_job, args=(job_id, tmp.name, req.dry_run), daemon=True)
+    thread = threading.Thread(target=_run_job, args=(job_id, str(csv_path), req.dry_run), daemon=True)
     thread.start()
 
     return JobResponse(
