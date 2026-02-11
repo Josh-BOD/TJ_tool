@@ -22,18 +22,21 @@ job_lock = threading.Lock()
 
 # TJ_tool root directory (parent of worker_server/)
 TJ_TOOL_DIR = Path(__file__).parent.parent
-INPUT_DIR = TJ_TOOL_DIR / "data" / "input" / "Campaign_Creation"
+CAMPAIGN_CREATION_DIR = TJ_TOOL_DIR / "data" / "input" / "Campaign_Creation"
+MULTILINGUAL_DIR = TJ_TOOL_DIR / "data" / "input" / "Multilingual_Campaign_Creation"
 SCRIPT_PATH = TJ_TOOL_DIR / "create_campaigns_v2_sync.py"
 
 
-def _get_ad_csvs() -> list[str]:
-    """List available ad CSV files in the input directory."""
-    if not INPUT_DIR.exists():
-        return []
-    return sorted([
-        f.name for f in INPUT_DIR.iterdir()
-        if f.is_file() and f.suffix.lower() == '.csv'
-    ])
+def _get_ad_csvs() -> dict[str, list[str]]:
+    """List available ad CSV files from both input directories."""
+    result: dict[str, list[str]] = {}
+    for label, directory in [("Campaign_Creation", CAMPAIGN_CREATION_DIR), ("Multilingual_Campaign_Creation", MULTILINGUAL_DIR)]:
+        if directory.exists():
+            result[label] = sorted([
+                f.name for f in directory.iterdir()
+                if f.is_file() and f.suffix.lower() == '.csv'
+            ])
+    return result
 
 
 def _run_job(job_id: str, csv_path: str, dry_run: bool):
@@ -104,6 +107,15 @@ def health():
 @app.get("/ad-csvs", response_model=AdCsvListResponse)
 def list_ad_csvs():
     return AdCsvListResponse(csv_files=_get_ad_csvs())
+
+# Also keep a flat list endpoint for backward compat
+@app.get("/ad-csvs/flat")
+def list_ad_csvs_flat():
+    all_csvs = _get_ad_csvs()
+    flat = []
+    for csvs in all_csvs.values():
+        flat.extend(csvs)
+    return {"csv_files": sorted(set(flat))}
 
 
 @app.post("/jobs", response_model=JobResponse)
