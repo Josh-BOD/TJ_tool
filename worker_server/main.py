@@ -87,7 +87,7 @@ def _build_command(csv_path: str, csv_content: str, dry_run: bool) -> list[str]:
             "--group", params["group"],
             "--live",
             "--create-campaigns",
-            "--headless",
+            "--no-headless",
         ]
         if dry_run:
             # For dry run, skip --live and --create-campaigns
@@ -96,13 +96,11 @@ def _build_command(csv_path: str, csv_content: str, dry_run: bool) -> list[str]:
                 "--languages", csv_path,
                 "--format", params["ad_format"],
                 "--group", params["group"],
-                "--headless",
             ]
     else:
         cmd = [
             "python", str(STANDARD_SCRIPT),
             csv_path,
-            "--headless",
         ]
         if dry_run:
             cmd.append("--dry-run")
