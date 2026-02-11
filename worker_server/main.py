@@ -119,11 +119,12 @@ def create_job(req: CreateJobRequest):
 
     job_id = str(uuid.uuid4())
 
-    # Write CSV content to the path the script expects
-    # create_campaigns_v2_sync.py with --input reads from this path
-    input_dir = TJ_TOOL_DIR / "data" / "input"
-    input_dir.mkdir(parents=True, exist_ok=True)
-    csv_path = input_dir / f"galactus_{job_id[:8]}.csv"
+    # Write CSV to the path the script actually reads from:
+    # create_campaigns_v2_sync.py uses WORKER_ID env var to construct
+    # data/temp/temp_batch_{WORKER_ID}.csv — it ignores the --input flag
+    temp_dir = TJ_TOOL_DIR / "data" / "temp"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    csv_path = temp_dir / "temp_batch_galactus.csv"
     csv_path.write_text(req.csv_content)
 
     # Count expected campaigns from CSV (lines minus header)
