@@ -343,15 +343,26 @@ class NativeUploader:
         """Select 'Mass create with CSV' radio button."""
         try:
             logger.info("Selecting 'Mass create with CSV' for Native ads...")
-            
+
+            # Dismiss any blocking modals first
+            page.evaluate('''() => {
+                document.querySelectorAll(".modal.in .close, .modal.show .close, [data-dismiss='modal']").forEach(b => b.click());
+                const backdrop = document.querySelector(".modal-backdrop");
+                if (backdrop) backdrop.remove();
+            }''')
+            time.sleep(0.3)
+
+            # Scroll to mass CSV section to ensure it's visible
+            page.evaluate('() => { const el = document.querySelector("label[for=\\"massAdsCsv\\"]") || document.querySelector("input#massAdsCsv"); if (el) el.scrollIntoView(); }')
+            time.sleep(0.3)
+
             # Click the radio button
             radio = page.locator('text=Mass create with CSV').first
             radio.click()
-            
+
             # Wait for file upload interface to appear
-            # For Native ads, the file input ID might be different
             page.wait_for_selector('#massAdsCsv', state='visible', timeout=5000)
-            
+
             logger.info("✓ Mass CSV option selected for Native ads")
             return True
         except Exception as e:

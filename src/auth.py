@@ -375,9 +375,9 @@ class TJAuthenticator:
                     if i % 5 == 0:
                         logger.info(f"[Check #{i}] Button disabled attribute: '{disabled_attr}'")
                     
-                    # Button is enabled when disabled attribute is None or empty string
-                    # (TrafficJunky removes the disabled attribute when reCAPTCHA is solved)
-                    if disabled_attr is None or disabled_attr == '':
+                    # Button is enabled when disabled attribute is completely absent (None)
+                    # Note: disabled="" (empty string) still means disabled in HTML
+                    if disabled_attr is None:
                         logger.info("✓ reCAPTCHA solved! Button enabled. Auto-clicking LOGIN...")
                         
                         # Wait a moment for any JS to settle

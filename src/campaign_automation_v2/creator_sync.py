@@ -33,7 +33,11 @@ logger = logging.getLogger(__name__)
 
 class CampaignCreationError(Exception):
     """Raised when campaign creation fails."""
-    pass
+    def __init__(self, message: str, orphan_id: str = None):
+        self.orphan_id = orphan_id
+        if orphan_id:
+            message = f"{message} [ORPHAN CAMPAIGN ID: {orphan_id} - delete manually]"
+        super().__init__(message)
 
 
 class CampaignCreator:
@@ -41,22 +45,24 @@ class CampaignCreator:
     
     BASE_URL = "https://advertiser.trafficjunky.com"
     
-    def __init__(self, page: Page, ad_format: str = "NATIVE", campaign_type: str = "Standard"):
+    def __init__(self, page: Page, ad_format: str = "NATIVE", campaign_type: str = "Standard", content_category: str = "straight"):
         """
         Initialize campaign creator.
-        
+
         Args:
             page: Playwright page object (already logged in)
             ad_format: Ad format - "NATIVE" or "INSTREAM" (default: NATIVE)
             campaign_type: Campaign type - "Standard" or "Remarketing" (default: Standard)
+            content_category: Content category - "straight", "gay", or "trans" (default: straight)
         """
         self.page = page
         self.ad_format = ad_format.upper()
         self.campaign_type = campaign_type.title()
-        
-        # Get templates for this format and campaign type
-        self.templates = get_templates(self.ad_format, self.campaign_type)
-        
+        self.content_category = content_category.lower()
+
+        # Get templates for this format, campaign type, and content category
+        self.templates = get_templates(self.ad_format, self.campaign_type, self.content_category)
+
         # Track if this is a remarketing campaign
         self.is_remarketing = self.campaign_type.lower() == "remarketing"
     
@@ -79,12 +85,12 @@ class CampaignCreator:
             CampaignCreationError: If creation fails
         """
         template_id = self.templates["desktop"]["id"]
-        keyword = campaign.primary_keyword if campaign.keywords else campaign.group
+        keyword = campaign.primary_keyword if campaign.keywords else "Broad"
         
         # Generate campaign name with all geos
         campaign_name = generate_campaign_name(
             geo=campaign.geo,  # Pass full geo list for multi-geo naming
-            language=DEFAULT_SETTINGS["language"],
+            language=campaign.settings.language,
             ad_format=self.ad_format,  # Use the format passed to creator
             bid_type=campaign.settings.bid_type,  # Use campaign's bid type
             source=DEFAULT_SETTINGS["source"],
@@ -92,38 +98,47 @@ class CampaignCreator:
             device="desktop",
             gender=campaign.settings.gender,
             test_number=campaign.test_number,
-            campaign_type=campaign.settings.campaign_type  # Pass campaign type for naming
+            campaign_type=campaign.settings.campaign_type,
+            geo_name=campaign.settings.geo_name,
+            content_category=self.content_category
         )
         
+        campaign_id = None
         try:
             # Navigate to campaigns page
             self.page.goto(f"{self.BASE_URL}/campaigns")
             self.page.wait_for_load_state("networkidle")
-            
+
             # Clone template
             campaign_id = self._clone_campaign(template_id)
-            
+
             # Configure campaign
-            self._configure_basic_settings(campaign_name, campaign.group, campaign.settings.gender)
+            self._configure_basic_settings(campaign_name, campaign.group, campaign.settings.gender, campaign.settings.labels)
             self._configure_geo(campaign.geo)  # Pass full geo list
-            
+            self._set_browser_language(campaign.settings.language)
+
             # Configure keywords only if there are any (optional for remarketing)
             if campaign.keywords:
                 self._configure_keywords(campaign.keywords)
             else:
                 # Just save and continue past the keywords step
                 self._click_save_and_continue()
-            
+
             self._configure_tracking_and_bids(campaign)
             self._configure_schedule_and_budget(campaign)
-            
+
             # Delete any inherited ads before uploading new ones
             self._delete_all_ads()
-            
+
+            # Configure ad rotation to Autopilot (CTR)
+            self._configure_ad_rotation("autopilot", "ctr")
+
             return campaign_id, campaign_name
-            
+
         except Exception as e:
-            raise CampaignCreationError(f"Failed to create desktop campaign: {str(e)}")
+            if campaign_id:
+                logger.error(f"  ✗ ORPHANED CAMPAIGN: {campaign_id} (failed during configuration - delete manually)")
+            raise CampaignCreationError(f"Failed to create desktop campaign: {str(e)}", orphan_id=campaign_id)
     
     def create_ios_campaign(
         self,
@@ -141,11 +156,11 @@ class CampaignCreator:
             Tuple of (campaign_id, campaign_name)
         """
         template_id = self.templates["ios"]["id"]
-        keyword = campaign.primary_keyword if campaign.keywords else campaign.group
+        keyword = campaign.primary_keyword if campaign.keywords else "Broad"
         
         campaign_name = generate_campaign_name(
             geo=campaign.geo,  # Pass full geo list for multi-geo naming
-            language=DEFAULT_SETTINGS["language"],
+            language=campaign.settings.language,
             ad_format=self.ad_format,  # Use the format passed to creator
             bid_type=campaign.settings.bid_type,  # Use campaign's bid type
             source=DEFAULT_SETTINGS["source"],
@@ -154,18 +169,22 @@ class CampaignCreator:
             gender=campaign.settings.gender,
             mobile_combined=campaign.mobile_combined,
             test_number=campaign.test_number,
-            campaign_type=campaign.settings.campaign_type  # Pass campaign type for naming
+            campaign_type=campaign.settings.campaign_type,
+            geo_name=campaign.settings.geo_name,
+            content_category=self.content_category
         )
         
+        campaign_id = None
         try:
             self.page.goto(f"{self.BASE_URL}/campaigns")
             self.page.wait_for_load_state("networkidle")
-            
+
             campaign_id = self._clone_campaign(template_id)
-            
-            self._configure_basic_settings(campaign_name, campaign.group, campaign.settings.gender)
+
+            self._configure_basic_settings(campaign_name, campaign.group, campaign.settings.gender, campaign.settings.labels)
             self._configure_geo(campaign.geo)  # Pass full geo list
-            
+            self._set_browser_language(campaign.settings.language)
+
             # If mobile_combined, configure both iOS and Android OS targeting
             if campaign.mobile_combined:
                 self._configure_os_targeting(
@@ -176,24 +195,29 @@ class CampaignCreator:
             else:
                 # Configure iOS OS targeting with version constraint only
                 self._configure_os_targeting(["iOS"], campaign.settings.ios_version)
-            
+
             # Configure keywords only if there are any (optional for remarketing)
             if campaign.keywords:
                 self._configure_keywords(campaign.keywords)
             else:
                 # Just save and continue past the keywords step
                 self._click_save_and_continue()
-            
+
             self._configure_tracking_and_bids(campaign)
             self._configure_schedule_and_budget(campaign)
-            
+
             # Delete any inherited ads before uploading new ones
             self._delete_all_ads()
-            
+
+            # Configure ad rotation to Autopilot (CTR)
+            self._configure_ad_rotation("autopilot", "ctr")
+
             return campaign_id, campaign_name
-            
+
         except Exception as e:
-            raise CampaignCreationError(f"Failed to create iOS campaign: {str(e)}")
+            if campaign_id:
+                logger.error(f"  ✗ ORPHANED CAMPAIGN: {campaign_id} (failed during configuration - delete manually)")
+            raise CampaignCreationError(f"Failed to create iOS campaign: {str(e)}", orphan_id=campaign_id)
     
     def create_android_campaign(
         self,
@@ -212,11 +236,11 @@ class CampaignCreator:
         Returns:
             Tuple of (campaign_id, campaign_name)
         """
-        keyword = campaign.primary_keyword if campaign.keywords else campaign.group
+        keyword = campaign.primary_keyword if campaign.keywords else "Broad"
         
         campaign_name = generate_campaign_name(
             geo=campaign.geo,  # Pass full geo list for multi-geo naming
-            language=DEFAULT_SETTINGS["language"],
+            language=campaign.settings.language,
             ad_format=self.ad_format,  # Use the format passed to creator
             bid_type=campaign.settings.bid_type,  # Use campaign's bid type
             source=DEFAULT_SETTINGS["source"],
@@ -225,34 +249,42 @@ class CampaignCreator:
             gender=campaign.settings.gender,
             mobile_combined=campaign.mobile_combined,
             test_number=campaign.test_number,
-            campaign_type=campaign.settings.campaign_type  # Pass campaign type for naming
+            campaign_type=campaign.settings.campaign_type,
+            geo_name=campaign.settings.geo_name,
+            content_category=self.content_category
         )
         
+        campaign_id = None
         try:
             self.page.goto(f"{self.BASE_URL}/campaigns")
             self.page.wait_for_load_state("networkidle")
-            
+
             # Clone iOS campaign
             campaign_id = self._clone_campaign(ios_campaign_id)
-            
+
             # Update name
             self._update_campaign_name(campaign_name)
-            
+
             # Update OS targeting (remove iOS, add Android with version constraint)
             self._configure_os_targeting(["Android"], android_version=campaign.settings.android_version)
-            
+
             # Continue through remaining steps (inherited from iOS)
             self._click_save_and_continue()  # Keywords
             self._click_save_and_continue()  # Tracking
             self._click_save_and_continue()  # Budget
-            
+
             # Delete inherited ads before uploading new ones
             self._delete_all_ads()
-            
+
+            # Configure ad rotation to Autopilot (CTR)
+            self._configure_ad_rotation("autopilot", "ctr")
+
             return campaign_id, campaign_name
-            
+
         except Exception as e:
-            raise CampaignCreationError(f"Failed to create Android campaign: {str(e)}")
+            if campaign_id:
+                logger.error(f"  ✗ ORPHANED CAMPAIGN: {campaign_id} (failed during configuration - delete manually)")
+            raise CampaignCreationError(f"Failed to create Android campaign: {str(e)}", orphan_id=campaign_id)
     
     def create_all_mobile_campaign(
         self,
@@ -278,11 +310,11 @@ class CampaignCreator:
         else:
             template_id = self.templates["ios"]["id"]
         
-        keyword = campaign.primary_keyword if campaign.keywords else campaign.group
+        keyword = campaign.primary_keyword if campaign.keywords else "Broad"
         
         campaign_name = generate_campaign_name(
             geo=campaign.geo,  # Pass full geo list for multi-geo naming
-            language=DEFAULT_SETTINGS["language"],
+            language=campaign.settings.language,
             ad_format=self.ad_format,  # Use the format passed to creator
             bid_type=campaign.settings.bid_type,  # Use campaign's bid type
             source=DEFAULT_SETTINGS["source"],
@@ -291,42 +323,53 @@ class CampaignCreator:
             gender=campaign.settings.gender,
             mobile_combined=True,  # Always true for all_mobile
             test_number=campaign.test_number,
-            campaign_type=campaign.settings.campaign_type  # Pass campaign type for naming
+            campaign_type=campaign.settings.campaign_type,
+            geo_name=campaign.settings.geo_name,
+            content_category=self.content_category
         )
         
+        campaign_id = None
         try:
             self.page.goto(f"{self.BASE_URL}/campaigns")
             self.page.wait_for_load_state("networkidle")
-            
+
             campaign_id = self._clone_campaign(template_id)
-            
-            self._configure_basic_settings(campaign_name, campaign.group, campaign.settings.gender)
+
+            self._configure_basic_settings(campaign_name, campaign.group, campaign.settings.gender, campaign.settings.labels)
             self._configure_geo(campaign.geo)  # Pass full geo list
-            
-            # Ensure both iOS and Android OS targeting
-            self._configure_os_targeting(
-                ["iOS", "Android"],
-                campaign.settings.ios_version,
-                campaign.settings.android_version
-            )
-            
+            self._set_browser_language(campaign.settings.language)
+
+            # Skip OS targeting for remarketing - templates already have iOS/Android configured
+            if not self.is_remarketing:
+                # Ensure both iOS and Android OS targeting for standard campaigns
+                self._configure_os_targeting(
+                    ["iOS", "Android"],
+                    campaign.settings.ios_version,
+                    campaign.settings.android_version
+                )
+
             # Configure keywords only if there are any (optional for remarketing)
             if campaign.keywords:
                 self._configure_keywords(campaign.keywords)
             else:
                 # Just save and continue past the keywords step
                 self._click_save_and_continue()
-            
+
             self._configure_tracking_and_bids(campaign)
             self._configure_schedule_and_budget(campaign)
-            
+
             # Delete any inherited ads before uploading new ones
             self._delete_all_ads()
-            
+
+            # Configure ad rotation to Autopilot (CTR)
+            self._configure_ad_rotation("autopilot", "ctr")
+
             return campaign_id, campaign_name
-            
+
         except Exception as e:
-            raise CampaignCreationError(f"Failed to create all mobile campaign: {str(e)}")
+            if campaign_id:
+                logger.error(f"  ✗ ORPHANED CAMPAIGN: {campaign_id} (failed during configuration - delete manually)")
+            raise CampaignCreationError(f"Failed to create all mobile campaign: {str(e)}", orphan_id=campaign_id)
     
     # =========================================================================
     # V3 From-Scratch Campaign Creation
@@ -353,13 +396,13 @@ class CampaignCreator:
         Raises:
             CampaignCreationError: If creation fails
         """
-        keyword = campaign.primary_keyword if campaign.keywords else campaign.group
+        keyword = campaign.primary_keyword if campaign.keywords else "Broad"
         settings = campaign.settings
         
         # Generate campaign name
         campaign_name = generate_campaign_name(
             geo=campaign.geo,
-            language=DEFAULT_SETTINGS["language"],
+            language=campaign.settings.language,
             ad_format=self.ad_format,
             bid_type=settings.bid_type,  # Use campaign's bid type
             source=DEFAULT_SETTINGS["source"],
@@ -368,28 +411,32 @@ class CampaignCreator:
             gender=settings.gender,
             mobile_combined=campaign.mobile_combined,
             test_number=campaign.test_number,
-            campaign_type=settings.campaign_type  # Pass campaign type for naming
+            campaign_type=settings.campaign_type,
+            geo_name=settings.geo_name,
+            content_category=self.content_category
         )
         
+        campaign_id = None
         try:
             # Navigate to create campaign page
             logger.info(f"Navigating to create campaign page...")
             self.page.goto(f"{self.BASE_URL}/campaign/drafts/bid/create")
             self.page.wait_for_load_state("networkidle")
             time.sleep(1)
-            
+
             # Step 1: Configure all first-page settings
             logger.info(f"Configuring basic settings...")
             self._configure_first_page_settings(campaign_name, campaign, device_variant)
-            
+
             # Extract campaign ID from URL after save
             campaign_id = self.page.url.split("/campaign/")[1].split("/")[0].split("?")[0]
             logger.info(f"Campaign created with ID: {campaign_id}")
-            
+
             # Step 2: Configure geo targeting
             logger.info(f"Configuring geo targeting...")
             self._configure_geo(campaign.geo)
-            
+            self._set_browser_language(campaign.settings.language)
+
             # Step 2b: Configure OS targeting for mobile
             variant_lower = device_variant.lower().strip()
             if variant_lower in ("ios", "android", "mobile", "all mobile"):
@@ -405,29 +452,31 @@ class CampaignCreator:
                     self._configure_os_targeting(["iOS"], settings.ios_version)
                 elif variant_lower == "android":
                     self._configure_os_targeting(["Android"], android_version=settings.android_version)
-            
+
             # Step 2c: Save & Continue (geo/audience page)
             self._click_save_and_continue()
-            
+
             # Step 3: Configure keywords
             logger.info(f"Configuring keywords...")
             self._configure_keywords(campaign.keywords)
-            
+
             # Step 4: Configure tracking and bids
             logger.info(f"Configuring tracking and bids...")
             self._configure_tracking_and_bids(campaign)
-            
+
             # Step 5: Configure schedule and budget
             logger.info(f"Configuring schedule and budget...")
             self._configure_schedule_and_budget(campaign)
-            
+
             # Now on ads page - ready for CSV upload
             logger.info(f"✓ Campaign {campaign_name} created successfully")
-            
+
             return campaign_id, campaign_name
-            
+
         except Exception as e:
-            raise CampaignCreationError(f"Failed to create campaign from scratch: {str(e)}")
+            if campaign_id:
+                logger.error(f"  ✗ ORPHANED CAMPAIGN: {campaign_id} (failed during configuration - delete manually)")
+            raise CampaignCreationError(f"Failed to create campaign from scratch: {str(e)}", orphan_id=campaign_id)
     
     def _configure_first_page_settings(
         self,
@@ -515,34 +564,48 @@ class CampaignCreator:
         self._click_save_and_continue()
     
     def _set_labels(self, labels: List[str]):
-        """Set campaign labels (multi-select)."""
+        """Set campaign labels (multi-select). Removes inherited labels first."""
         try:
-            # Find and click the labels input field directly
+            # Step 1: Remove all existing labels (custom div.labelBox chips, NOT select2)
+            # The X button is div.deleteLabel inside div.labelBox
+            removed = 0
+            for _ in range(20):  # Max 20 labels to remove
+                delete_btn = self.page.locator(".deleteLabel").first
+                if delete_btn.count() > 0 and delete_btn.is_visible():
+                    try:
+                        delete_btn.click(timeout=1000)
+                        time.sleep(0.3)
+                        removed += 1
+                    except:
+                        break
+                else:
+                    break
+            if removed:
+                logger.info(f"  Removed {removed} inherited label(s)")
+
+            # Step 2: Add new labels via select2 (select#selectLabel)
             labels_input = self.page.locator('input.select2-search__field[placeholder="Select or Input a Label"]')
             labels_input.click()
             time.sleep(0.5)
-            
+
             for label in labels:
-                # Type label in search field
                 labels_input.fill(label)
                 time.sleep(0.5)
-                
-                # Click on matching result or press Enter to create new
+
                 try:
-                    # Wait for dropdown option to appear
                     option = self.page.locator('li.select2-results__option').first
                     option.wait_for(state='visible', timeout=2000)
                     option.click()
                     time.sleep(0.3)
                 except:
-                    # If no option found, press Enter to create the label
                     self.page.keyboard.press("Enter")
-                    logger.info(f"Created new label: {label}")
+                    logger.info(f"  Created new label: {label}")
                     time.sleep(0.3)
-            
+
             # Close dropdown
             self.page.keyboard.press("Escape")
             time.sleep(0.3)
+            logger.info(f"  ✓ Labels set: {labels}")
         except Exception as e:
             logger.warning(f"Could not set labels: {e}")
     
@@ -693,59 +756,83 @@ class CampaignCreator:
         except Exception as e:
             print(f"    ⚠ Navigation warning: {e}")
             time.sleep(2)
-        
-        # Use the "All Campaigns" searchbox to filter by ID
+
+        time.sleep(2)
+
+        # Use the "All Campaigns" searchbox to filter by template ID
         searchbox = self.page.locator('input.select2-search__field[placeholder="All Campaigns"]')
         searchbox.fill(template_id)
-        time.sleep(1)
-        
+        time.sleep(2)
+
         # Click on the dropdown result
         self.page.click('li.select2-results__option')
         time.sleep(0.5)
-        
-        # Click "Apply Filters" button (as per your workflow doc)
+
+        # Click "Apply Filters" button
         apply_filters_btn = self.page.query_selector('button:has-text("Apply Filters")')
         if apply_filters_btn:
             apply_filters_btn.click()
-            time.sleep(1)
-        
-        # Select the campaign checkbox
-        checkbox_selector = f'input[type="checkbox"][value="{template_id}"]'
-        self.page.click(checkbox_selector)
+            time.sleep(2)
+
+        # Try multiple selectors for the campaign checkbox
+        checkbox_clicked = False
+        for selector in [
+            f'input[type="checkbox"][value="{template_id}"]',
+            'input[type="checkbox"][name="campaigns[]"]',
+            'td input[type="checkbox"]',
+        ]:
+            try:
+                cb = self.page.locator(selector).first
+                if cb.count() > 0:
+                    cb.click(timeout=5000)
+                    checkbox_clicked = True
+                    break
+            except Exception:
+                continue
+
+        if not checkbox_clicked:
+            raise CampaignCreationError(f"Could not find checkbox for template {template_id}")
+
         time.sleep(0.5)
-        
+
         # Now the clone button should be visible in the action toolbar
-        # It's a button with a copy icon, not an <a> tag
-        # Wait for it to be visible and click it
         self.page.wait_for_selector('button:has(i.fa-copy)', state='visible', timeout=5000)
         self.page.click('button:has(i.fa-copy)')
         time.sleep(1)
-        
+
         # Wait for redirect to new campaign page
         self.page.wait_for_url(f"{self.BASE_URL}/campaign/*")
-        
+
         # Extract campaign ID from URL
         campaign_id = self.page.url.split("/campaign/")[1].split("?")[0]
-        
+
         return campaign_id
     
     def _configure_basic_settings(
         self,
         campaign_name: str,
         group_name: str,
-        gender: str
+        gender: str,
+        labels: Optional[List[str]] = None
     ):
         """Configure basic campaign settings (Step 1)."""
+        # Dismiss any modals left over from cloning
+        self._dismiss_modals()
+
         # Update campaign name
         self.page.fill('input[name="name"]', "")
         self.page.fill('input[name="name"]', campaign_name)
-        
+
         # Select or create group
         self._select_or_create_group(group_name)
-        
+
+        # Set labels if provided
+        if labels:
+            self._set_labels(labels)
+
         # Set gender
         self._set_gender(gender)
-        
+
         # Save & Continue
         self._click_save_and_continue()
     
@@ -761,50 +848,51 @@ class CampaignCreator:
         if group_name.lower() == "general":
             logger.info(f"  ✓ Group: General (pre-selected)")
             return
-        
+
         try:
             # Open group dropdown
             self.page.click('span.select2-selection[aria-labelledby="select2-group_id-container"]')
             time.sleep(0.5)
 
             # Search for group
-            self.page.fill('input.select2-search__field', group_name)
-            time.sleep(0.5)
-            
-            # Check if group exists
+            search_field = self.page.locator('.select2-container--open input.select2-search__field')
+            search_field.fill(group_name)
+            time.sleep(1)
+
+            # Check if group exists in dropdown results
             no_results = self.page.query_selector('li.select2-results__message')
-            
+
             if no_results:
                 # Create new group
                 self.page.click('a#showNewGroupFormButton')
-                
-                # Fill the input and trigger events to enable the button
+
                 input_field = self.page.locator('input#new_group_name')
                 input_field.fill(group_name)
-                
-                # Trigger input event to enable button
                 input_field.evaluate('(el) => el.dispatchEvent(new Event("input", { bubbles: true }))')
-                
-                # Wait for button to be enabled (try with retry)
+
                 try:
                     self.page.wait_for_function(
                         'document.querySelector("button#confirmNewGroupButton") && document.querySelector("button#confirmNewGroupButton").disabled === false',
                         timeout=3000
                     )
                 except:
-                    # Force enable button if waiting fails
                     time.sleep(0.5)
                     self.page.evaluate('document.querySelector("button#confirmNewGroupButton").disabled = false')
-                
+
                 self.page.click('button#confirmNewGroupButton')
                 time.sleep(0.5)
+                logger.info(f"  ✓ Created new group: {group_name}")
             else:
-                # Select existing group
-                self.page.keyboard.press("Enter")
+                # Click the exact matching option
+                option = self.page.locator('li.select2-results__option').filter(has_text=group_name).first
+                if option.count() > 0:
+                    option.click()
+                else:
+                    self.page.keyboard.press("Enter")
                 time.sleep(0.5)
+                logger.info(f"  ✓ Selected group: {group_name}")
         except Exception as e:
-            print(f"    ⚠ Could not set group (non-critical): {e}")
-            # Group is optional, try to close dropdown and continue
+            logger.warning(f"  Could not set group: {e}")
             try:
                 self.page.keyboard.press("Escape")
             except:
@@ -863,6 +951,96 @@ class CampaignCreator:
             self.page.click('button#addLocation')
             time.sleep(0.5)
     
+    LANGUAGE_MAP = {
+        "EN": "English", "FR": "French", "DE": "German", "ES": "Spanish",
+        "IT": "Italian", "PT": "Portuguese", "NL": "Dutch", "JA": "Japanese",
+        "KO": "Korean", "ZH": "Chinese", "PL": "Polish", "RU": "Russian",
+        "TR": "Turkish", "AR": "Arabic", "CS": "Czech", "SV": "Swedish",
+        "DA": "Danish", "NO": "Norwegian", "FI": "Finnish", "HU": "Hungarian",
+        "RO": "Romanian", "TH": "Thai",
+    }
+
+    def _set_browser_language(self, language_code: str):
+        """Change browser language targeting on the geo page (for cloned campaigns)."""
+        if not language_code or language_code.upper() == "EN":
+            return  # Template already has English, no change needed
+
+        lang_name = self.LANGUAGE_MAP.get(language_code.upper(), language_code)
+        try:
+            section = self.page.locator("#campaign_browserLanguageTargeting")
+            section.scroll_into_view_if_needed()
+            time.sleep(0.5)
+
+            # Ensure browser language targeting is toggled ON
+            self.page.evaluate('''() => {
+                const section = document.querySelector("#campaign_browserLanguageTargeting");
+                if (!section) return;
+                const checkbox = section.querySelector("input[type='checkbox']");
+                if (checkbox && !checkbox.checked) {
+                    checkbox.click();
+                    checkbox.dispatchEvent(new Event("change", { bubbles: true }));
+                }
+            }''')
+            time.sleep(1)
+
+            # Remove ALL existing languages via their remove buttons
+            removed = self.page.evaluate('''() => {
+                let count = 0;
+                // Method 1: Click all remove buttons in the browser language section
+                const section = document.querySelector("#campaign_browserLanguageTargeting");
+                if (section) {
+                    const removeBtns = section.querySelectorAll(
+                        "a.removeBtn, a.removeBrowserLanguage, a[class*='remove'], "
+                        + "button[class*='remove'], .remove-browser-lang, "
+                        + "a[data-action='remove']"
+                    );
+                    removeBtns.forEach(btn => { btn.click(); count++; });
+                }
+                // Method 2: Remove select2 choices
+                const choices = section ? section.querySelectorAll(".select2-selection__choice__remove") : [];
+                choices.forEach(btn => { btn.click(); count++; });
+                return count;
+            }''')
+            time.sleep(0.5)
+
+            # Also try clicking visible remove buttons via Playwright
+            while True:
+                remove_btn = section.locator("a[class*='remove'], .select2-selection__choice__remove").first
+                if remove_btn.count() > 0 and remove_btn.is_visible():
+                    try:
+                        remove_btn.click(timeout=1000)
+                        time.sleep(0.3)
+                    except:
+                        break
+                else:
+                    break
+
+            if removed:
+                logger.info(f"  Removed {removed} existing browser language(s)")
+
+            # Click the select2 dropdown to open it
+            select2 = section.locator(".select2-container").first
+            select2.scroll_into_view_if_needed()
+            time.sleep(0.3)
+            select2.click()
+            time.sleep(0.5)
+
+            # Type and select the language
+            search_input = self.page.locator(".select2-container--open .select2-search__field")
+            search_input.fill(lang_name)
+            time.sleep(0.5)
+            self.page.locator(".select2-results__option").filter(has_text=lang_name).first.click()
+            time.sleep(0.3)
+
+            # Close dropdown if still open
+            if self.page.locator(".select2-container--open").count() > 0:
+                self.page.keyboard.press("Escape")
+                time.sleep(0.3)
+
+            logger.info(f"  ✓ Browser language set: {lang_name}")
+        except Exception as e:
+            logger.warning(f"  Could not set browser language: {e}")
+
     def _configure_os_targeting(self, operating_systems: List[str], ios_version=None, android_version=None):
         """
         Configure OS targeting with optional version constraints.
@@ -1079,58 +1257,244 @@ class CampaignCreator:
     
     def _configure_cpm_bidding(self, campaign: CampaignDefinition):
         """
-        Configure CPM bidding using suggested bids from sources.
-        
-        This method handles the CPM bidding workflow on the Source Selection page.
-        It will use each source's suggested CPM bid.
-        
-        TODO: This method needs to be implemented based on the actual UI workflow.
-        The user will show the manual process for this.
+        Configure CPM bidding by setting max bid based on highest suggested CPM.
+
+        Keeps template sources as-is. Reads the highest suggested CPM from included
+        sources and sets max bid to that value adjusted by the cpm_adjust percentage.
         """
         settings = campaign.settings
-        
-        # For now, we'll include all sources and use their suggested bids
-        # The actual CPM bid setting will be implemented when we document the workflow
-        logger.info("CPM bidding - using suggested bids from sources")
-        
-        # Include all sources first
+        cpm_adjust = settings.cpm_adjust
+
+        logger.info("CPM bidding - keeping template sources")
+
+        if cpm_adjust is not None:
+            logger.info(f"Setting max bid from suggested CPM + {cpm_adjust}%...")
+            self._set_max_bid_from_suggested(cpm_adjust)
+        else:
+            logger.info("Using template's CPM bids (no adjustment)")
+
+    def _set_max_bid_from_suggested(self, percentage: int):
+        """Set max bid to highest suggested CPM + percentage adjustment."""
         try:
-            source_checkbox = self.page.locator('input.checkUncheckAll[data-table="sourceSelectionTable"]')
-            if source_checkbox.is_visible(timeout=2000):
-                self.page.check('input.checkUncheckAll[data-table="sourceSelectionTable"]')
-                time.sleep(0.3)
-                self.page.click('button.includeBtn[data-btn-action="include"]')
-                time.sleep(0.5)
-        except:
-            pass
-        
-        # TODO: Implement CPM bid setting per source
-        # This will be documented when the user shows the manual workflow
-        logger.warning("CPM bidding workflow not fully implemented - using default source bids")
+            # Wait for sources table to load
+            time.sleep(2)
+
+            # Show all entries in included sources table
+            try:
+                page_length = self.page.query_selector('select[name="includedSourcesTable_length"]')
+                if page_length:
+                    self.page.select_option('select[name="includedSourcesTable_length"]', '100')
+                    time.sleep(2)
+            except:
+                pass
+
+            # Read highest suggested CPM from included sources
+            highest_bid = self.page.evaluate('''() => {
+                let highest = 0;
+                // Try data-your-cpm attributes first
+                const links = document.querySelectorAll("a[data-your-cpm]");
+                for (const a of links) {
+                    const val = parseFloat(a.getAttribute("data-your-cpm"));
+                    if (!isNaN(val) && val > highest) highest = val;
+                }
+                // Fallback: read $ values from td cells
+                if (highest === 0) {
+                    document.querySelectorAll("td").forEach(td => {
+                        const match = td.textContent.trim().match(/^\\$([\\d.]+)/);
+                        if (match) {
+                            const val = parseFloat(match[1]);
+                            if (val > highest) highest = val;
+                        }
+                    });
+                }
+                return highest;
+            }''')
+
+            if highest_bid and highest_bid > 0:
+                multiplier = 1 + (percentage / 100)
+                max_bid = round(highest_bid * multiplier, 2)
+                logger.info(f"  Highest suggested CPM: ${highest_bid} → Max bid: ${max_bid} (+{percentage}%)")
+            else:
+                max_bid = 0.3
+                logger.info(f"  No suggested CPMs found, using default: ${max_bid}")
+
+            # Set the max bid field
+            bid_input = self.page.locator("#maximum_bid")
+            bid_input.click()
+            time.sleep(0.2)
+            bid_input.fill(str(max_bid))
+            time.sleep(0.3)
+            logger.info(f"  ✓ Max bid set: ${max_bid}")
+
+        except Exception as e:
+            logger.warning(f"  Could not set max bid from suggested CPM: {e}")
     
     def _configure_schedule_and_budget(self, campaign: CampaignDefinition):
         """Configure schedule and budget (Step 4)."""
         settings = campaign.settings
-        
-        # Frequency cap
-        self.page.fill('input#frequency_cap_times', "")
-        self.page.fill('input#frequency_cap_times', str(settings.frequency_cap))
-        
-        # First, select "Custom" budget option to make daily_budget field visible
-        # Click the label, not the input
-        self.page.click('label:has(input#is_unlimited_budget_custom)')
-        time.sleep(0.5)
-        
-        # Now the daily budget field should be visible
-        # Max Daily Budget
-        self.page.fill('input#daily_budget', "")
-        self.page.fill('input#daily_budget', str(settings.max_daily_budget))
-        
+
+        # Log current URL for debugging page flow
+        current_url = self.page.url
+        logger.info(f"  Budget page URL: {current_url}")
+
+        # Wait for budget page to fully load
+        self.page.wait_for_load_state("networkidle")
+        time.sleep(1)
+
+        # Dismiss any blocking modals first
+        self._dismiss_modals()
+
+        # Frequency cap — toggle via JS since it's a CSS onoffswitch
+        if settings.frequency_cap == 0:
+            # Disable frequency capping (uncheck the toggle)
+            self.page.evaluate('''() => {
+                const section = document.querySelector("#campaign_frequency_capping");
+                if (section) {
+                    const checkbox = section.querySelector("input[type='checkbox']");
+                    if (checkbox && checkbox.checked) {
+                        checkbox.click();
+                    }
+                }
+            }''')
+            time.sleep(0.3)
+            logger.info("  ✓ Frequency capping disabled")
+        else:
+            # Enable frequency capping and set the value
+            self.page.evaluate('''() => {
+                const section = document.querySelector("#campaign_frequency_capping");
+                if (section) {
+                    const checkbox = section.querySelector("input[type='checkbox']");
+                    if (checkbox && !checkbox.checked) {
+                        checkbox.click();
+                    }
+                }
+            }''')
+            time.sleep(0.3)
+            self.page.fill('input#frequency_cap_times', "")
+            self.page.fill('input#frequency_cap_times', str(settings.frequency_cap))
+            logger.info(f"  ✓ Frequency cap set to {settings.frequency_cap}")
+
+        # Dismiss any blocking modals before budget section
+        self._dismiss_modals()
+
+        # Diagnose budget page state
+        budget_diag = self.page.evaluate('''() => {
+            const customRadio = document.getElementById("is_unlimited_budget_custom");
+            const unlimitedRadio = document.getElementById("is_unlimited_budget");
+            const budgetField = document.getElementById("daily_budget");
+            return {
+                customRadioExists: !!customRadio,
+                customRadioChecked: customRadio ? customRadio.checked : null,
+                unlimitedRadioExists: !!unlimitedRadio,
+                unlimitedRadioChecked: unlimitedRadio ? unlimitedRadio.checked : null,
+                budgetFieldExists: !!budgetField,
+                budgetFieldVisible: budgetField ? (budgetField.offsetParent !== null) : null,
+                budgetFieldValue: budgetField ? budgetField.value : null
+            };
+        }''')
+        logger.info(f"  Budget state: custom={budget_diag.get('customRadioChecked')}, "
+                     f"unlimited={budget_diag.get('unlimitedRadioChecked')}, "
+                     f"field_exists={budget_diag.get('budgetFieldExists')}, "
+                     f"field_visible={budget_diag.get('budgetFieldVisible')}, "
+                     f"current_value={budget_diag.get('budgetFieldValue')}")
+
+        # Select "Custom" budget option to make daily_budget field visible
+        # Use JS with jQuery fallback — TJ uses jQuery for form handling
+        self.page.evaluate('''() => {
+            const input = document.getElementById("is_unlimited_budget_custom");
+            if (input) {
+                input.checked = true;
+                input.click();
+                input.dispatchEvent(new Event("change", {bubbles: true}));
+                input.dispatchEvent(new Event("input", {bubbles: true}));
+            }
+            // Try jQuery trigger if available (TJ uses jQuery)
+            if (typeof $ !== "undefined") {
+                try { $("#is_unlimited_budget_custom").prop("checked", true).trigger("click").trigger("change"); } catch(e) {}
+            }
+            // Also try clicking the label
+            const label = document.querySelector('label[for="is_unlimited_budget_custom"]');
+            if (label) label.click();
+        }''')
+        time.sleep(1)
+
+        # Wait for budget field to appear after clicking Custom radio
+        for attempt in range(3):
+            budget_field_ready = self.page.evaluate('''() => {
+                const field = document.getElementById("daily_budget");
+                return field && field.offsetParent !== null;
+            }''')
+            if budget_field_ready:
+                break
+            logger.info(f"  Waiting for budget field to appear (attempt {attempt + 1}/3)...")
+            time.sleep(1)
+            # Force-show if hidden
+            self.page.evaluate('''() => {
+                const budgetField = document.getElementById("daily_budget");
+                if (budgetField) {
+                    let parent = budgetField.closest("div[style*='display: none'], div.hidden, .custom-budget-section");
+                    if (parent) parent.style.display = "";
+                    budgetField.style.display = "";
+                    budgetField.removeAttribute("disabled");
+                }
+            }''')
+
+        # Max Daily Budget — use JS to set value
+        budget_set = self.page.evaluate(f'''() => {{
+            const field = document.getElementById("daily_budget");
+            if (field) {{
+                field.value = "";
+                field.value = "{settings.max_daily_budget}";
+                field.dispatchEvent(new Event("input", {{bubbles: true}}));
+                field.dispatchEvent(new Event("change", {{bubbles: true}}));
+                if (typeof $ !== "undefined") {{
+                    try {{ $("#daily_budget").val("{settings.max_daily_budget}").trigger("input").trigger("change"); }} catch(e) {{}}
+                }}
+                return true;
+            }}
+            return false;
+        }}''')
+        if budget_set:
+            logger.info(f"  ✓ Daily budget set to {settings.max_daily_budget}")
+        else:
+            # Fallback to Playwright fill with short timeout
+            try:
+                self.page.fill('input#daily_budget', "", timeout=5000)
+                self.page.fill('input#daily_budget', str(settings.max_daily_budget), timeout=5000)
+                logger.info(f"  ✓ Daily budget set to {settings.max_daily_budget} (fallback)")
+            except Exception:
+                logger.warning(f"  Could not set daily budget — template value will be used")
+
         # Save & Continue to ads page
         self._click_save_and_continue()
+
+        # Verify we reached the ads page (URL should contain /ad-settings)
+        time.sleep(1)
+        self.page.wait_for_load_state("networkidle")
+        ads_url = self.page.url
+        if "/ad-settings" not in ads_url and "/ads" not in ads_url:
+            logger.warning(f"  Expected ads page but got: {ads_url}")
+            # Try Save & Continue again — maybe a validation error or modal blocked it
+            self._dismiss_modals()
+            time.sleep(1)
+            try:
+                self._click_save_and_continue()
+                time.sleep(1)
+                self.page.wait_for_load_state("networkidle")
+                ads_url = self.page.url
+                if "/ad-settings" not in ads_url and "/ads" not in ads_url:
+                    logger.warning(f"  Still not on ads page after retry: {ads_url}")
+                else:
+                    logger.info(f"  ✓ Reached ads page on retry: {ads_url}")
+            except Exception:
+                logger.warning(f"  Could not navigate to ads page — continuing anyway")
+        else:
+            logger.info(f"  ✓ On ads page: {ads_url}")
     
     def _delete_all_ads(self):
         """Delete all existing ads (inherited from cloning)."""
+        # Dismiss any modals blocking the ads page
+        self._dismiss_modals()
         try:
             # Step 1: Set page length to 100 to ensure all ads are visible
             page_length_dropdown = self.page.query_selector('select[name="adsTable_length"]')
@@ -1177,8 +1541,98 @@ class CampaignCreator:
             # If deletion fails, log but don't crash - the CSV upload will just add to existing ads
             logger.warning(f"Could not delete existing ads (may be none to delete): {e}")
     
+    def _configure_ad_rotation(self, method: str = "autopilot", optimization: str = "ctr"):
+        """
+        Configure ad rotation settings on the Ads page.
+        
+        Args:
+            method: "autopilot" or "manual" (default: autopilot)
+            optimization: "ctr" or "cpa" when autopilot is selected (default: ctr)
+        """
+        try:
+            logger.info(f"  Configuring ad rotation: {method} ({optimization})...")
+            
+            # Click the Autopilot radio button
+            autopilot_selector = 'input[name="ad_rotation"][value="autopilot"]'
+            autopilot_radio = self.page.query_selector(autopilot_selector)
+            
+            if autopilot_radio:
+                # Click the label to ensure it's selected (radio might be hidden)
+                label = self.page.query_selector('label[data-ad-rotation-trackers="autopilot"]')
+                if label:
+                    label.click()
+                else:
+                    autopilot_radio.click()
+                time.sleep(0.5)
+                
+                # Now select CTR or CPA optimization
+                if optimization.lower() == "ctr":
+                    ctr_selector = 'input[name="ad_rotation_autopilot"][value="ctr"]'
+                    ctr_radio = self.page.query_selector(ctr_selector)
+                    if ctr_radio:
+                        # Try clicking the label first
+                        ctr_label = self.page.query_selector('label[for="ad_rotation_autopilot_ctr"]')
+                        if ctr_label:
+                            ctr_label.click()
+                        else:
+                            ctr_radio.click()
+                        logger.info("  ✓ Ad rotation set to Autopilot (CTR)")
+                    else:
+                        logger.warning("  Could not find CTR radio button")
+                elif optimization.lower() == "cpa":
+                    cpa_selector = 'input[name="ad_rotation_autopilot"][value="cpa"]'
+                    cpa_radio = self.page.query_selector(cpa_selector)
+                    if cpa_radio:
+                        cpa_label = self.page.query_selector('label[for="ad_rotation_autopilot_cpa"]')
+                        if cpa_label:
+                            cpa_label.click()
+                        else:
+                            cpa_radio.click()
+                        logger.info("  ✓ Ad rotation set to Autopilot (CPA)")
+                    else:
+                        logger.warning("  Could not find CPA radio button")
+            else:
+                logger.warning("  Could not find Autopilot radio button")
+                
+        except Exception as e:
+            logger.warning(f"  Could not configure ad rotation: {e}")
+    
+    def _dismiss_modals(self):
+        """Dismiss any blocking modals (e.g., reviewYourBidsModal)."""
+        try:
+            # Check for reviewYourBidsModal or similar overlay modals
+            dismissed = self.page.evaluate('''() => {
+                let dismissed = false;
+                // Close reviewYourBidsModal
+                const modal = document.querySelector("#reviewYourBidsModal");
+                if (modal && modal.style.display !== "none") {
+                    const closeBtn = modal.querySelector(".close, [data-dismiss='modal'], button.closeModal");
+                    if (closeBtn) { closeBtn.click(); dismissed = true; }
+                }
+                // Close any visible Bootstrap modal
+                const openModal = document.querySelector(".modal.in, .modal.show");
+                if (openModal) {
+                    const closeBtn = openModal.querySelector(".close, [data-dismiss='modal']");
+                    if (closeBtn) { closeBtn.click(); dismissed = true; }
+                }
+                // Remove any modal backdrop
+                const backdrop = document.querySelector(".modal-backdrop");
+                if (backdrop) { backdrop.remove(); dismissed = true; }
+                return dismissed;
+            }''')
+            if dismissed:
+                time.sleep(0.5)
+                logger.info("  Dismissed blocking modal")
+        except Exception:
+            pass
+
     def _click_save_and_continue(self):
-        """Click Save & Continue button."""
+        """Click Save & Continue button, verifying the page actually navigates."""
+        url_before = self.page.url
+
+        # Dismiss any modals that might be blocking
+        self._dismiss_modals()
+
         # Try multiple possible selectors in order of specificity
         selectors = [
             'button.confirmAudience.saveAndContinue',  # Step 2 (keywords)
@@ -1187,13 +1641,64 @@ class CampaignCreator:
             'button.saveAndContinue',  # Generic
             'button:has-text("Save & Continue")',  # Fallback by text
         ]
-        
-        for selector in selectors:
-            button = self.page.query_selector(selector)
-            if button and button.is_visible():
-                button.click()
-                time.sleep(2)  # Wait for page transition
-                return
-        
-        raise CampaignCreationError("Could not find Save & Continue button")
+
+        for attempt in range(3):
+            for selector in selectors:
+                button = self.page.query_selector(selector)
+                if button and button.is_visible():
+                    button.click()
+                    time.sleep(2)  # Wait for page transition
+                    # Dismiss any modal that pops up after save
+                    self._dismiss_modals()
+
+                    # Verify URL changed (navigation happened)
+                    if self.page.url != url_before:
+                        return
+
+                    # URL didn't change — click may have been intercepted by modal
+                    if attempt < 2:
+                        logger.info(f"  Save & Continue clicked but page didn't navigate (attempt {attempt + 1}/3), retrying...")
+                        # Aggressive modal cleanup
+                        self.page.evaluate('''() => {
+                            document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
+                            document.querySelectorAll('.modal.in, .modal.show, .modal[style*="display: block"]').forEach(el => {
+                                el.style.display = "none";
+                                el.classList.remove("in", "show");
+                            });
+                            document.body.classList.remove('modal-open');
+                            document.body.style.removeProperty('padding-right');
+                            document.body.style.overflow = '';
+                        }''')
+                        time.sleep(1)
+                        self.page.keyboard.press('Escape')
+                        time.sleep(0.5)
+                    break  # Found a button, break inner loop to retry
+            else:
+                # No button found at all
+                if attempt < 2:
+                    logger.info(f"  No Save & Continue button found (attempt {attempt + 1}/3), retrying...")
+                    self._dismiss_modals()
+                    time.sleep(1)
+                    continue
+                raise CampaignCreationError("Could not find Save & Continue button")
+
+        # If we exhausted retries but URL hasn't changed, try JS click as last resort
+        if self.page.url == url_before:
+            logger.warning("  Save & Continue: page didn't navigate after 3 attempts, trying JS click...")
+            clicked = self.page.evaluate('''() => {
+                const btns = document.querySelectorAll('button.saveAndContinue, button[type="submit"]');
+                for (const btn of btns) {
+                    btn.click();
+                    return true;
+                }
+                return false;
+            }''')
+            if clicked:
+                time.sleep(3)
+                self.page.wait_for_load_state("networkidle")
+                self._dismiss_modals()
+                if self.page.url != url_before:
+                    logger.info("  ✓ JS click navigated successfully")
+                    return
+            logger.warning(f"  Save & Continue failed to navigate from {url_before}")
 

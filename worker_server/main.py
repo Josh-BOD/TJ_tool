@@ -1,8 +1,14 @@
 """
 FastAPI worker server for Campaign Builder.
-Runs on Mac Mini Pros to execute create_campaigns_v2_sync.py jobs.
+Runs on Mac Mini Pros to execute campaign creation jobs.
+
+Supports two CSV formats:
+- Multilingual: has lang_code, ad_csv_straight columns → runs create_multilingual.py
+- Standard: has group, csv_file, variants, enabled → runs create_campaigns_v3_scratch.py
 """
 
+import csv
+import io
 import os
 import socket
 import subprocess
@@ -24,7 +30,8 @@ job_lock = threading.Lock()
 TJ_TOOL_DIR = Path(__file__).parent.parent
 CAMPAIGN_CREATION_DIR = TJ_TOOL_DIR / "data" / "input" / "Campaign_Creation"
 MULTILINGUAL_DIR = TJ_TOOL_DIR / "data" / "input" / "Multilingual_Campaign_Creation"
-SCRIPT_PATH = TJ_TOOL_DIR / "create_campaigns_v2_sync.py"
+MULTILINGUAL_SCRIPT = TJ_TOOL_DIR / "create_multilingual.py"
+STANDARD_SCRIPT = TJ_TOOL_DIR / "create_campaigns_v3_scratch.py"
 
 
 def _get_ad_csvs() -> dict[str, list[str]]:
@@ -39,18 +46,77 @@ def _get_ad_csvs() -> dict[str, list[str]]:
     return result
 
 
-def _run_job(job_id: str, csv_path: str, dry_run: bool):
-    """Run create_campaigns_v2_sync.py in a subprocess (background thread)."""
-    cmd = [
-        "python", str(SCRIPT_PATH),
-        "--input", csv_path,
-        "--headless",
-    ]
-    if dry_run:
-        cmd.append("--dry-run")
+def _detect_csv_format(csv_content: str) -> str:
+    """Detect whether CSV is multilingual or standard format.
+
+    Returns 'multilingual' if headers contain lang_code, otherwise 'standard'.
+    """
+    reader = csv.reader(io.StringIO(csv_content))
+    try:
+        headers = [h.strip().lower() for h in next(reader)]
+    except StopIteration:
+        return "standard"
+
+    if "lang_code" in headers:
+        return "multilingual"
+    return "standard"
+
+
+def _extract_multilingual_params(csv_content: str) -> dict:
+    """Extract --format and --group from the first data row of a multilingual CSV."""
+    reader = csv.DictReader(io.StringIO(csv_content))
+    for row in reader:
+        row = {k.strip().lower(): v.strip() for k, v in row.items()}
+        return {
+            "ad_format": (row.get("ad_format") or "NATIVE").upper(),
+            "group": row.get("group") or row.get("lang_name") or "i18n",
+        }
+    return {"ad_format": "NATIVE", "group": "i18n"}
+
+
+def _build_command(csv_path: str, csv_content: str, dry_run: bool) -> list[str]:
+    """Build the command to run based on CSV format."""
+    fmt = _detect_csv_format(csv_content)
+
+    if fmt == "multilingual":
+        params = _extract_multilingual_params(csv_content)
+        cmd = [
+            "python", str(MULTILINGUAL_SCRIPT),
+            "--languages", csv_path,
+            "--format", params["ad_format"],
+            "--group", params["group"],
+            "--live",
+            "--create-campaigns",
+            "--headless",
+        ]
+        if dry_run:
+            # For dry run, skip --live and --create-campaigns
+            cmd = [
+                "python", str(MULTILINGUAL_SCRIPT),
+                "--languages", csv_path,
+                "--format", params["ad_format"],
+                "--group", params["group"],
+                "--headless",
+            ]
+    else:
+        cmd = [
+            "python", str(STANDARD_SCRIPT),
+            csv_path,
+            "--headless",
+        ]
+        if dry_run:
+            cmd.append("--dry-run")
+
+    return cmd
+
+
+def _run_job(job_id: str, csv_path: str, csv_content: str, dry_run: bool):
+    """Run campaign creation in a subprocess (background thread)."""
+    cmd = _build_command(csv_path, csv_content, dry_run)
 
     with job_lock:
         jobs[job_id]["status"] = "running"
+        jobs[job_id]["log_lines"] = [f"Detected format: {_detect_csv_format(csv_content)}", f"Command: {' '.join(cmd)}"]
 
     try:
         proc = subprocess.Popen(
@@ -64,14 +130,14 @@ def _run_job(job_id: str, csv_path: str, dry_run: bool):
         with job_lock:
             jobs[job_id]["process"] = proc
 
-        log_lines: deque[str] = deque(maxlen=50)
+        log_lines: deque[str] = deque(maxlen=200)
         campaigns_created = 0
 
         for line in proc.stdout:  # type: ignore[union-attr]
             line = line.rstrip()
             log_lines.append(line)
-            # Count campaigns by looking for success markers in output
-            if "Campaign created successfully" in line or "✓" in line:
+            # Count campaigns by looking for "  ID: <number>" pattern in output
+            if "  ID: " in line:
                 campaigns_created += 1
             with job_lock:
                 jobs[job_id]["log_lines"] = list(log_lines)
@@ -131,9 +197,8 @@ def create_job(req: CreateJobRequest):
 
     job_id = str(uuid.uuid4())
 
-    # Write CSV into Multilingual_Campaign_Creation dir so the script
-    # resolves ad CSV paths (csv_file column) relative to this directory.
-    # create_campaigns_v2_sync.py sets csv_dir = input_file.parent
+    # Write CSV into Multilingual_Campaign_Creation dir so ad CSV paths
+    # (ad_csv_straight etc.) resolve relative to this directory.
     input_dir = TJ_TOOL_DIR / "data" / "input" / "Multilingual_Campaign_Creation"
     input_dir.mkdir(parents=True, exist_ok=True)
     csv_path = input_dir / "temp_batch_galactus.csv"
@@ -156,7 +221,11 @@ def create_job(req: CreateJobRequest):
         }
 
     # Launch in background thread
-    thread = threading.Thread(target=_run_job, args=(job_id, str(csv_path), req.dry_run), daemon=True)
+    thread = threading.Thread(
+        target=_run_job,
+        args=(job_id, str(csv_path), req.csv_content, req.dry_run),
+        daemon=True,
+    )
     thread.start()
 
     return JobResponse(

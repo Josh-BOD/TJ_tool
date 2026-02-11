@@ -93,6 +93,8 @@ class CampaignSettings:
     # Campaign type and bidding settings
     campaign_type: str = "Standard"  # Options: "Standard" (keyword), "Remarketing" (audience)
     bid_type: str = "CPA"  # Options: "CPA", "CPM"
+    geo_name: str = ""  # Custom geo short name for naming (e.g., "OTH2" for multiple geos)
+    cpm_adjust: Optional[int] = None  # CPM adjustment percentage (e.g., 10 = +10%, -5 = -5%)
     
     # V3 From-Scratch settings (first page configuration)
     labels: List[str] = field(default_factory=list)  # Campaign labels (e.g., ["Native", "Test"])
@@ -102,7 +104,8 @@ class CampaignSettings:
     ad_type: str = "rollover"  # static_banner, video_banner, rollover
     ad_dimensions: str = "640x360"  # 300x250, 950x250, 468x60, 305x99, 300x100, 970x90, 320x480, 640x360
     content_category: str = "straight"  # straight, gay, trans
-    
+    language: str = "EN"  # Language code for campaign naming (e.g., "EN", "ES", "DE")
+
     def __post_init__(self):
         """Initialize version constraints if not set."""
         if self.ios_version is None:
@@ -121,6 +124,8 @@ class CampaignSettings:
         self.format_type = self.format_type.lower()
         self.ad_type = self.ad_type.lower()
         self.content_category = self.content_category.lower()
+        # Normalize language to uppercase
+        self.language = self.language.strip().upper()
     
     @property
     def is_remarketing(self) -> bool:
@@ -146,6 +151,8 @@ class CampaignSettings:
             "ad_format": self.ad_format,
             "campaign_type": self.campaign_type,
             "bid_type": self.bid_type,
+            "geo_name": self.geo_name,
+            "cpm_adjust": self.cpm_adjust,
             # V3 From-Scratch settings
             "labels": self.labels,
             "device": self.device,
@@ -153,7 +160,8 @@ class CampaignSettings:
             "format_type": self.format_type,
             "ad_type": self.ad_type,
             "ad_dimensions": self.ad_dimensions,
-            "content_category": self.content_category
+            "content_category": self.content_category,
+            "language": self.language
         }
 
 
@@ -300,6 +308,8 @@ class CampaignDefinition:
             ad_format=settings_data.get("ad_format", "NATIVE"),
             campaign_type=settings_data.get("campaign_type", "Standard"),
             bid_type=settings_data.get("bid_type", "CPA"),
+            geo_name=settings_data.get("geo_name", ""),
+            cpm_adjust=settings_data.get("cpm_adjust"),
             # V3 From-Scratch settings
             labels=settings_data.get("labels", []),
             device=settings_data.get("device", "desktop"),
@@ -307,7 +317,8 @@ class CampaignDefinition:
             format_type=settings_data.get("format_type", "native"),
             ad_type=settings_data.get("ad_type", "rollover"),
             ad_dimensions=settings_data.get("ad_dimensions", "640x360"),
-            content_category=settings_data.get("content_category", "straight")
+            content_category=settings_data.get("content_category", "straight"),
+            language=settings_data.get("language", "EN")
         )
         
         # Parse variant statuses

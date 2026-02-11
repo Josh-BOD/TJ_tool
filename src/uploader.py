@@ -440,16 +440,16 @@ class TJUploader:
     
     def _update_csv_with_campaign_name(self, csv_path: Path, campaign_name: str) -> Path:
         """
-        Update CSV file to replace sub11 parameter with actual campaign name.
-        Also truncates ad names to 64 characters (TrafficJunky limit).
-        Creates a temporary CSV file with updated values.
+        Check if CSV needs modification for campaign name.
+        If URLs use {CampaignName} macro, use original file directly (no temp file).
+        Only creates temp file if sub11 replacement or ad name truncation is needed.
         
         Args:
             csv_path: Original CSV file path
             campaign_name: Actual campaign name to use
             
         Returns:
-            Path to updated temporary CSV file
+            Path to use for upload (original or temp)
         """
         try:
             import re
@@ -460,7 +460,31 @@ class TJUploader:
                 fieldnames = reader.fieldnames
                 rows = list(reader)
             
-            # Create temporary file
+            # First pass: check if any modifications are needed
+            needs_modification = False
+            
+            for row in rows:
+                # Check if any ad names need truncation
+                if 'Ad Name' in row and row['Ad Name'] and len(row['Ad Name']) > 64:
+                    needs_modification = True
+                    break
+                
+                # Check if any URLs need sub11 replacement (not using {CampaignName} macro)
+                for url_field in ['Target URL', 'Custom CTA URL', 'Banner CTA URL']:
+                    if url_field in row and row[url_field]:
+                        if '{CampaignName}' not in row[url_field] and 'sub11=' in row[url_field]:
+                            needs_modification = True
+                            break
+                
+                if needs_modification:
+                    break
+            
+            # If using TJ macros and no truncation needed, use original file directly
+            if not needs_modification:
+                logger.info(f"✓ Using original CSV (TJ {{CampaignName}} macro detected)")
+                return csv_path
+            
+            # Create temporary file only if modifications needed
             temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False, encoding='utf-8')
             temp_path = Path(temp_file.name)
             
@@ -471,47 +495,33 @@ class TJUploader:
                 
                 for row in rows:
                     # Truncate Ad Name to 64 characters (TrafficJunky limit)
-                    # Keep the ID at the end (format: ID-XXXXXXXX-VID)
                     if 'Ad Name' in row and row['Ad Name']:
                         ad_name = row['Ad Name']
                         if len(ad_name) > 64:
-                            # Try to extract ID pattern (ID-XXXXXXXX-VID or similar)
-                            # Match alphanumeric ID with format: ID-<alphanumeric>-<letters>
                             id_match = re.search(r'(ID-[A-Za-z0-9]+-[A-Z]+)$', ad_name)
                             if id_match:
                                 id_part = id_match.group(1)
-                                # Truncate the beginning but keep the ID
-                                max_prefix_len = 64 - len(id_part) - 1  # -1 for underscore
+                                max_prefix_len = 64 - len(id_part) - 1
                                 prefix = ad_name[:max_prefix_len]
                                 row['Ad Name'] = f"{prefix}_{id_part}"
-                                logger.info(f"Truncated ad name from {len(ad_name)} to 64 chars (kept ID): {row['Ad Name']}")
+                                logger.info(f"Truncated ad name (kept ID): {row['Ad Name']}")
                             else:
-                                # No ID pattern found, just truncate
                                 row['Ad Name'] = ad_name[:64]
-                                logger.info(f"Truncated ad name to 64 chars (no ID pattern): {row['Ad Name']}")
-                        else:
-                            logger.debug(f"Ad name OK ({len(ad_name)} chars): {ad_name}")
+                                logger.info(f"Truncated ad name to 64 chars: {row['Ad Name']}")
                     
-                    # Update Target URL - replace sub11 value with actual campaign name
-                    if 'Target URL' in row and row['Target URL']:
-                        # Replace sub11=<anything> with sub11=<campaign_name>
-                        row['Target URL'] = re.sub(r'sub11=[^&]*', f'sub11={campaign_name}', row['Target URL'])
-                    
-                    # Also update Custom CTA URL if it exists
-                    if 'Custom CTA URL' in row and row['Custom CTA URL']:
-                        row['Custom CTA URL'] = re.sub(r'sub11=[^&]*', f'sub11={campaign_name}', row['Custom CTA URL'])
-                    
-                    # Also update Banner CTA URL if it exists
-                    if 'Banner CTA URL' in row and row['Banner CTA URL']:
-                        row['Banner CTA URL'] = re.sub(r'sub11=[^&]*', f'sub11={campaign_name}', row['Banner CTA URL'])
+                    # Update URLs only if NOT using {CampaignName} macro
+                    for url_field in ['Target URL', 'Custom CTA URL', 'Banner CTA URL']:
+                        if url_field in row and row[url_field]:
+                            if '{CampaignName}' not in row[url_field]:
+                                row[url_field] = re.sub(r'sub11=[^&]*', f'sub11={campaign_name}', row[url_field])
                     
                     writer.writerow(row)
             
-            logger.info(f"✓ Updated CSV with campaign name in sub11: {campaign_name}")
+            logger.info(f"✓ Created temp CSV (truncated names or updated sub11)")
             return temp_path
             
         except Exception as e:
-            logger.warning(f"Failed to update CSV with campaign name: {e}")
-            # Return original path if update fails
+            logger.warning(f"Failed to process CSV: {e}")
+            # Return original path if processing fails
             return csv_path
 

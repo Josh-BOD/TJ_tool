@@ -10,6 +10,7 @@ import sys
 import os
 import time
 import logging
+import argparse
 from pathlib import Path
 from datetime import datetime
 
@@ -78,7 +79,9 @@ def upload_csv_to_campaign(page, csv_path: Path, campaign_name: str, ad_format: 
 def create_campaign_set(page, campaign: CampaignDefinition, csv_dir: Path):
     """Create all variants for a campaign definition."""
     ad_format = campaign.settings.ad_format
-    creator = CampaignCreator(page, ad_format=ad_format)
+    campaign_type = campaign.settings.campaign_type
+    content_category = campaign.settings.content_category
+    creator = CampaignCreator(page, ad_format=ad_format, campaign_type=campaign_type, content_category=content_category)
     
     csv_path = csv_dir / campaign.csv_file
     if not csv_path.exists():
@@ -89,8 +92,8 @@ def create_campaign_set(page, campaign: CampaignDefinition, csv_dir: Path):
     created_campaigns = []
     
     for variant in campaign.variants:
-        # Skip Android if mobile_combined (iOS campaign handles both)
-        if campaign.mobile_combined and variant == "android":
+        # Skip Android if mobile_combined and not using all_mobile variant (iOS campaign handles both)
+        if campaign.mobile_combined and variant == "android" and "all_mobile" not in campaign.variants:
             continue
         
         try:
@@ -100,6 +103,9 @@ def create_campaign_set(page, campaign: CampaignDefinition, csv_dir: Path):
             
             if variant == "desktop":
                 campaign_id, campaign_name = creator.create_desktop_campaign(campaign, geo)
+            elif variant == "all_mobile":
+                # Use dedicated all_mobile template (mainly for remarketing)
+                campaign_id, campaign_name = creator.create_all_mobile_campaign(campaign, geo)
             elif variant == "ios":
                 campaign_id, campaign_name = creator.create_ios_campaign(campaign, geo)
             elif variant == "android":
@@ -110,12 +116,15 @@ def create_campaign_set(page, campaign: CampaignDefinition, csv_dir: Path):
                 else:
                     logger.warning("No iOS campaign to clone from for Android")
                     continue
+            else:
+                logger.warning(f"Unknown variant: {variant}")
+                continue
             
             logger.info(f"✓ Created campaign: {campaign_name}")
             logger.info(f"  ID: {campaign_id}")
             
-            # Upload CSV with campaign name for tracking URL replacement
-            upload_csv_to_campaign(page, csv_path, campaign_name, ad_format)
+            # Upload CSV — don't replace sub11, TJ fills {CampaignName} dynamically
+            upload_csv_to_campaign(page, csv_path, None, ad_format)
             
             created_campaigns.append((campaign_id, campaign_name))
             
@@ -127,31 +136,57 @@ def create_campaign_set(page, campaign: CampaignDefinition, csv_dir: Path):
 
 
 def run_sync():
-    """Main sync runner for parallel workers."""
-    # Get input file from environment (set by parallel launcher)
-    worker_id = os.environ.get('WORKER_ID', '1')
-    input_file = Path(f"data/temp/temp_batch_{worker_id}.csv")
-    
+    """Main sync runner — accepts --input or falls back to temp batch file for parallel launcher."""
+    parser = argparse.ArgumentParser(description="Campaign Creation V2 Sync")
+    parser.add_argument("--input", type=str, help="Path to campaign CSV file")
+    parser.add_argument("--dry-run", action="store_true", help="Preview only, don't create campaigns")
+    parser.add_argument("--no-headless", action="store_true", default=True, help="Show browser (default)")
+    parser.add_argument("--headless", action="store_true", help="Run headless")
+    parser.add_argument("--slow-mo", type=int, default=500, help="Slow motion delay in ms")
+    args = parser.parse_args()
+
+    # Determine input file: --input flag takes priority, else temp batch file
+    if args.input:
+        input_file = Path(args.input)
+    else:
+        worker_id = os.environ.get('WORKER_ID', '1')
+        input_file = Path(f"data/temp/temp_batch_{worker_id}.csv")
+
     logger.info(f"Starting...")
     logger.info(f"Using CSV: {input_file}")
-    
+
     if not input_file.exists():
         logger.error(f"Input file not found: {input_file}")
         return
-    
+
     # Parse CSV
     batch = parse_csv(input_file)
     enabled = batch.enabled_campaigns
-    
+
     logger.info(f"Found {len(enabled)} enabled campaigns")
-    
-    csv_dir = Path("data/input/Campaign_Creation")
+
+    if args.dry_run:
+        logger.info("\n=== DRY RUN — previewing campaigns ===")
+        for i, campaign in enumerate(enabled, 1):
+            ad_format = campaign.settings.ad_format
+            campaign_type = campaign.settings.campaign_type
+            content_category = campaign.settings.content_category
+            lang = campaign.settings.language
+            geo = campaign.geo[0] if campaign.geo else "US"
+            csv_file = campaign.csv_file
+            logger.info(f"  {i}. [{content_category}] {geo}_{lang}_{ad_format}_{campaign.settings.bid_type}_{campaign_type} — variants: {campaign.variants}")
+            logger.info(f"     group: {campaign.group} | csv: {csv_file}")
+        logger.info(f"\nTotal: {len(enabled)} campaigns")
+        return
+
+    # Resolve csv_dir: use input file's parent directory so relative csv_file paths work
+    csv_dir = input_file.parent
     
     # Launch browser & authenticate (same pattern as Pause_ads_V1.py)
     with sync_playwright() as p:
         browser = p.chromium.launch(
-            headless=False, 
-            slow_mo=500
+            headless=args.headless,
+            slow_mo=args.slow_mo
         )
         
         context = browser.new_context(

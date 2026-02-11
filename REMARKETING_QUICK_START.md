@@ -39,17 +39,26 @@ For All Mobile variants:
 ### Basic Remarketing (No Keywords, CPM Bidding)
 
 ```csv
-group,keywords,ad_format,campaign_type,bid_type,variants,csv_file,enabled
-Milfs,,NATIVE,Remarketing,CPM,"desktop,all mobile",Native_Ads.csv,TRUE
-Latina,,INSTREAM,Remarketing,CPM,"desktop,all mobile",PreRoll_Ads.csv,TRUE
+group,keywords,ad_format,campaign_type,bid_type,cpm_adjust,variants,csv_file,t,enabled
+Milfs,,NATIVE,Remarketing,CPM,10,"desktop,all mobile",Native_Ads.csv,,TRUE
+Latina,,INSTREAM,Remarketing,CPM,,"desktop,all mobile",PreRoll_Ads.csv,1,TRUE
 ```
+
+**Note:** `cpm_adjust=10` means +10% above suggested CPM. Leave empty to use suggested bids as-is.
 
 ### Hybrid Remarketing (Keywords + Audience, CPA Bidding)
 
 ```csv
-group,keywords,keyword_matches,ad_format,campaign_type,bid_type,variants,csv_file,target_cpa,enabled
-Milfs,"milf;milfs",broad,NATIVE,Remarketing,CPA,"desktop,all mobile",Native_Ads.csv,55,TRUE
+group,keywords,keyword_matches,ad_format,campaign_type,bid_type,variants,csv_file,target_cpa,t,enabled
+Milfs,"milf;milfs",broad,NATIVE,Remarketing,CPA,"desktop,all mobile",Native_Ads.csv,55,2A,TRUE
 ```
+
+### Test Number Column
+
+The `t` column adds a test number suffix to the campaign name:
+- Empty: No suffix (e.g., `US_EN_NATIVE_CPM_ALL_RMK-Milfs_DESK_M_JB`)
+- `1`: Adds `_T-1` suffix (e.g., `US_EN_NATIVE_CPM_ALL_RMK-Milfs_DESK_M_JB_T-1`)
+- `2A`: Adds `_T-2A` suffix (useful for A/B testing)
 
 ## Variants
 
@@ -69,7 +78,7 @@ Milfs,"milf;milfs",broad,NATIVE,Remarketing,CPA,"desktop,all mobile",Native_Ads.
 ### CPM (Cost Per Mille)
 - Uses suggested CPM bids from each source
 - Typically used for remarketing/retargeting campaigns
-- **Note:** CPM workflow implementation in progress
+- Use `cpm_adjust` column to adjust bids by percentage (e.g., `10` = +10%, `-5` = -5%)
 
 ## Usage
 

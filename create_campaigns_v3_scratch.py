@@ -106,7 +106,8 @@ def create_campaign_from_scratch(page, campaign: CampaignDefinition, csv_dir: Pa
     giving full control over all first-page settings.
     """
     ad_format = campaign.settings.ad_format
-    creator = CampaignCreator(page, ad_format=ad_format)
+    content_category = campaign.settings.content_category
+    creator = CampaignCreator(page, ad_format=ad_format, content_category=content_category)
     
     csv_path = csv_dir / campaign.csv_file
     if not csv_path.exists():
@@ -226,7 +227,7 @@ def validate_csv_only(csv_path: Path):
         return False
 
 
-def run_v3(csv_path: Path, dry_run: bool = False):
+def run_v3(csv_path: Path, dry_run: bool = False, headless: bool = False, slow_mo: int = 500):
     """Main runner for V3 from-scratch campaign creation."""
     logger.info("=" * 60)
     logger.info("Campaign Creation V3 - From Scratch")
@@ -264,8 +265,8 @@ def run_v3(csv_path: Path, dry_run: bool = False):
     # Launch browser & authenticate
     with sync_playwright() as p:
         browser = p.chromium.launch(
-            headless=False, 
-            slow_mo=500  # Slow down for visibility
+            headless=headless,
+            slow_mo=slow_mo
         )
         
         context = browser.new_context(
@@ -358,11 +359,24 @@ Output: data/output/Blank_Campaign_Creation/
         action='store_true',
         help='Validate CSV without creating campaigns'
     )
-    
+
+    parser.add_argument(
+        '--headless',
+        action='store_true',
+        help='Run browser in headless mode'
+    )
+
+    parser.add_argument(
+        '--slow-mo',
+        type=int,
+        default=500,
+        help='Slow motion delay in ms (default: 500)'
+    )
+
     args = parser.parse_args()
-    
+
     csv_path = Path(args.csv_file)
-    run_v3(csv_path, dry_run=args.dry_run)
+    run_v3(csv_path, dry_run=args.dry_run, headless=args.headless, slow_mo=args.slow_mo)
 
 
 if __name__ == "__main__":

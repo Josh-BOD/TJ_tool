@@ -134,6 +134,8 @@ class CSVParser:
         "ad_format": "NATIVE",  # Options: "NATIVE", "INSTREAM" (default: NATIVE for V1 compatibility)
         "campaign_type": "Standard",  # Options: "Standard", "Remarketing"
         "bid_type": "CPA",  # Options: "CPA", "CPM"
+        "geo_name": "",  # Custom geo short name for naming (e.g., "OTH2" for multiple geos)
+        "cpm_adjust": "",  # CPM adjustment percentage (e.g., "10" = +10%, "-5" = -5%)
         "t": "",  # Test number (e.g., "12" becomes "_T-12" in campaign name)
         # V3 From-Scratch columns
         "labels": "",  # Comma-separated labels (e.g., "Native,Test")
@@ -143,6 +145,7 @@ class CSVParser:
         "ad_type": "rollover",  # Options: "static_banner", "video_banner", "rollover"
         "ad_dimensions": "640x360",  # Options: "300x250", "950x250", "468x60", "305x99", "300x100", "970x90", "320x480", "640x360"
         "content_category": "straight",  # Options: "straight", "gay", "trans"
+        "language": "EN",  # Language code (e.g., "EN", "ES", "DE")
     }
     
     # Valid values for campaign type and bidding
@@ -381,6 +384,8 @@ class CSVParser:
             ad_format=row.get("ad_format", DEFAULT_SETTINGS["ad_format"]).upper(),  # Parse ad_format from CSV
             campaign_type=campaign_type,
             bid_type=bid_type,
+            geo_name=row.get("geo_name", "").strip(),  # Custom geo short name
+            cpm_adjust=self._parse_int_or_none(row.get("cpm_adjust", "")),  # CPM adjustment percentage
             # V3 From-Scratch settings
             labels=labels,
             device=device,
@@ -388,7 +393,8 @@ class CSVParser:
             format_type=format_type,
             ad_type=ad_type,
             ad_dimensions=ad_dimensions,
-            content_category=content_category
+            content_category=content_category,
+            language=row.get("language", "EN").strip().upper()
         )
         
         # Parse test number (can be numeric or alphanumeric like "12", "12A", "V2", etc.)
@@ -401,17 +407,24 @@ class CSVParser:
         
         # Check if "all mobile" variant is used
         mobile_combined = "all mobile" in variants
+        is_remarketing = campaign_type.lower() == "remarketing"
         
         # Expand "all mobile" to actual variants for processing
         expanded_variants = []
         for variant in variants:
             if variant == "all mobile":
-                # Don't add "all mobile" itself - it's just a marker
-                # We'll create one combined campaign with both iOS and Android
-                if "ios" not in expanded_variants:
-                    expanded_variants.append("ios")
-                if "android" not in expanded_variants:
-                    expanded_variants.append("android")
+                if is_remarketing:
+                    # For remarketing, keep "all_mobile" as a single variant
+                    # We have dedicated all_mobile templates for remarketing
+                    if "all_mobile" not in expanded_variants:
+                        expanded_variants.append("all_mobile")
+                else:
+                    # For standard campaigns, expand to ios+android (original behavior)
+                    # This creates combined iOS+Android targeting in a single campaign
+                    if "ios" not in expanded_variants:
+                        expanded_variants.append("ios")
+                    if "android" not in expanded_variants:
+                        expanded_variants.append("android")
             else:
                 if variant not in expanded_variants:
                     expanded_variants.append(variant)
@@ -606,6 +619,16 @@ class CSVParser:
         """Parse integer value with default."""
         if not value or not value.strip():
             return default
+        
+        try:
+            return int(value.strip())
+        except ValueError:
+            raise CSVParseError(f"Invalid integer: {value}")
+    
+    def _parse_int_or_none(self, value: Optional[str]) -> Optional[int]:
+        """Parse integer value, return None if empty."""
+        if not value or not value.strip():
+            return None
         
         try:
             return int(value.strip())

@@ -1,0 +1,3 @@
+lang_code,lang_name,geo,geo_name,group,labels,keywords,keyword_matches,ad_format,bid_type,gender,categories,types,variants,target_cpa,per_source_budget,max_bid,frequency_cap,max_daily_budget,cpm_adjust,enabled,ad_csv_straight,ad_csv_gay,ad_csv_trans
+de,German,DE,,i18n,German,,,NATIVE,CPM,All,"straight,gay,trans","standard,remarketing","desktop,ios,android",0,0,1,0,250,10,TRUE,Native_TopPerfomers-DEC25.csv,Batch018_20251126_152926_Native_Gay.csv,Batch033_20260108_105336_Native_Trans.csv
+"es,en",Spanish,ES;MX;CO;AR;PE;VE;CL;EC;GT,LATAM,i18n,Spanish,,,NATIVE,CPM,All,"straight,gay,trans","standard,remarketing","desktop,ios,android",0,0,1,0,250,10,TRUE,Native_TopPerfomers-DEC25.csv,Batch018_20251126_152926_Native_Gay.csv,Batch033_20260108_105336_Native_Trans.csv

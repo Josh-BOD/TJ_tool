@@ -5,7 +5,12 @@ Contains template campaign IDs, default settings, and naming conventions.
 Supports both NATIVE and INSTREAM ad formats.
 """
 
-from typing import Dict, Any
+import json
+import logging
+from pathlib import Path
+from typing import Dict, Any, Optional
+
+logger = logging.getLogger(__name__)
 
 
 # Template campaign IDs by ad format (CONSTANTS - never change)
@@ -133,6 +138,7 @@ DEFAULT_SETTINGS = {
 # Example (remarketing): US_EN_NATIVE_CPM_ALL_RMK-Milfs_DESK_M_JB
 # Example (all mobile): US_EN_NATIVE_CPA_ALL_KEY-Milfs_MOB_ALL_M_JB
 # Example (multi-geo): US-CA_EN_NATIVE_CPA_ALL_KEY-Milfs_MOB_ALL_M_JB
+# Example (custom geo name): OTH2_EN_NATIVE_CPM_ALL_RMK-Milfs_DESK_M_JB
 # Example (with test number): US_EN_NATIVE_CPA_ALL_KEY-Milfs_MOB_ALL_M_JB_T-12
 def generate_campaign_name(
     geo: str,
@@ -146,64 +152,72 @@ def generate_campaign_name(
     user_initials: str = "JB",
     mobile_combined: bool = False,
     test_number: str = None,
-    campaign_type: str = "Standard"
+    campaign_type: str = "Standard",
+    geo_name: str = None,
+    content_category: str = "straight"
 ) -> str:
     """
     Generate campaign name following TrafficJunky naming convention.
-    
-    Args:
-        geo: Country code or codes (e.g., "US", "CA", or list like ["US", "CA"])
-        language: Language code (e.g., "EN")
-        ad_format: Ad format (e.g., "NATIVE")
-        bid_type: Bidding type (e.g., "CPA", "CPM")
-        source: Source type (e.g., "ALL", "PH")
-        keyword: Primary keyword (e.g., "Milfs") - used as group name for remarketing
-        device: Device type (e.g., "DESK", "iOS", "AND")
-        gender: Target gender ("M", "F", "ALL")
-        user_initials: User initials (default: "JB")
-        mobile_combined: If True, use "MOB_ALL" for mobile campaigns (default: False)
-        test_number: Test number/label (e.g., "12", "12A", "V2") - adds "_T-{number}" suffix
-        campaign_type: Campaign type - "Standard" (keyword) or "Remarketing" (audience)
-    
-    Returns:
-        Campaign name string
+
+    Naming: {GEO}_{LANG}_{FORMAT}_{BID}_{SOURCE}_{TARGETING}_{DEVICE}_{GENDER}_{INITIALS}
+
+    Targeting part depends on campaign_type and content_category:
+      - Standard straight:      KEY-{keyword}     (e.g., KEY-Broad, KEY-Milfs)
+      - Standard gay:           Gay
+      - Standard trans:         Trans
+      - Remarketing straight:   Remarketing
+      - Remarketing gay:        Gay-Remarketing
+      - Remarketing trans:      Trans-Remarketing
     """
-    # Handle geo as list or string
-    if isinstance(geo, list):
-        geo_str = "-".join(geo)  # Join multiple geos with dash
+    # Use custom geo_name if provided, otherwise build from geo codes
+    if geo_name and geo_name.strip():
+        geo_str = geo_name.strip()
+    elif isinstance(geo, list):
+        geo_str = "-".join(geo)
     else:
         geo_str = geo
-    
+
     # Capitalize keyword for name (use "Broad" if empty/no keyword targeting)
     if keyword and keyword.strip() and keyword.lower() != "unknown":
         keyword_title = keyword.title().replace(" ", "")
     else:
         keyword_title = "Broad"
-    
+
     # Convert gender to abbreviation (ALL = MF for Male+Female)
     gender_map = {"male": "M", "female": "F", "all": "MF"}
     gender_abbr = gender_map.get(gender.lower(), "M")
-    
+
     # Convert device to abbreviation
-    # If mobile_combined is True and device is mobile, use MOB_ALL
     if mobile_combined and device.lower() in ("ios", "android", "all_mobile"):
         device_abbr = "MOB_ALL"
     else:
         device_map = {"desktop": "DESK", "ios": "iOS", "android": "AND", "all_mobile": "MOB_ALL"}
         device_abbr = device_map.get(device.lower(), device.upper())
-    
+
     # Convert ad_format for campaign name (INSTREAM -> PREROLL)
     ad_format_name = "PREROLL" if ad_format.upper() == "INSTREAM" else ad_format.upper()
-    
-    # Determine targeting type prefix (KEY for keywords, RMK for remarketing)
-    targeting_prefix = "RMK" if campaign_type.lower() == "remarketing" else "KEY"
-    
+
+    # Build targeting part based on campaign_type + content_category
+    cat = (content_category or "straight").lower()
+    is_remarketing = campaign_type.lower() == "remarketing"
+
+    if cat == "gay":
+        targeting_part = "Gay-Remarketing" if is_remarketing else "Gay"
+    elif cat == "trans":
+        targeting_part = "Trans-Remarketing" if is_remarketing else "Trans"
+    else:
+        # straight
+        if is_remarketing:
+            targeting_part = "Remarketing"
+        else:
+            targeting_part = f"KEY-{keyword_title}"
+
     # Build base name
     base_name = (
         f"{geo_str}_{language}_{ad_format_name}_{bid_type}_{source}_"
-        f"{targeting_prefix}-{keyword_title}_{device_abbr}_{gender_abbr}_{user_initials}"
+        f"{targeting_part}_{device_abbr}_{gender_abbr}_{user_initials}"
     )
-    
+
     # Add test number suffix if provided
     if test_number:
         return f"{base_name}_T-{test_number}"
@@ -276,28 +290,101 @@ def get_remarketing_templates(ad_format: str) -> Dict[str, Any]:
     return REMARKETING_TEMPLATES[ad_format]
 
 
-def get_templates(ad_format: str, campaign_type: str = "Standard") -> Dict[str, Any]:
+def load_templates(path: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """
-    Get template campaigns for a specific ad format and campaign type.
-    
+    Load templates from config/templates.json.
+
+    Args:
+        path: Path to templates.json (default: config/templates.json relative to project root)
+
+    Returns:
+        Dictionary of templates, or None if file doesn't exist
+    """
+    if path is None:
+        # Default path relative to this file's parent (src/) -> project root
+        path = Path(__file__).parent.parent / "config" / "templates.json"
+    else:
+        path = Path(path)
+
+    if not path.exists():
+        return None
+
+    try:
+        with open(path, 'r') as f:
+            return json.load(f)
+    except (json.JSONDecodeError, IOError) as e:
+        logger.warning(f"Could not load templates from {path}: {e}")
+        return None
+
+
+# Cache for loaded templates (loaded once per process)
+_loaded_templates: Optional[Dict[str, Any]] = None
+_templates_loaded: bool = False
+
+
+def _get_loaded_templates() -> Optional[Dict[str, Any]]:
+    """Get cached loaded templates, loading from file on first call."""
+    global _loaded_templates, _templates_loaded
+    if not _templates_loaded:
+        _loaded_templates = load_templates()
+        _templates_loaded = True
+    return _loaded_templates
+
+
+def get_templates(ad_format: str, campaign_type: str = "Standard", content_category: str = "straight") -> Dict[str, Any]:
+    """
+    Get template campaigns for a specific ad format, campaign type, and content category.
+
+    Looks up orientation-specific templates from config/templates.json first.
+    Falls back to hardcoded TEMPLATE_CAMPAIGNS/REMARKETING_TEMPLATES if JSON is missing
+    or doesn't have the requested combination.
+
     Args:
         ad_format: "NATIVE" or "INSTREAM"
         campaign_type: "Standard" or "Remarketing"
-        
+        content_category: "straight", "gay", or "trans" (default: "straight")
+
     Returns:
-        Dictionary of template campaigns for the format and type
-        
+        Dictionary of template campaigns for the format, type, and orientation
+
     Raises:
         ValueError: If ad_format or campaign_type is invalid
     """
     ad_format = ad_format.upper()
     campaign_type_title = campaign_type.title()
-    
+    content_category = content_category.lower()
+
     if ad_format not in VALID_AD_FORMATS:
         raise ValueError(f"Invalid ad format: {ad_format}. Must be one of {VALID_AD_FORMATS}")
     if campaign_type_title not in VALID_CAMPAIGN_TYPES:
         raise ValueError(f"Invalid campaign type: {campaign_type}. Must be one of {VALID_CAMPAIGN_TYPES}")
-    
+
+    # Map ad_format to template label (INSTREAM -> PREROLL in templates.json)
+    label_map = {"NATIVE": "NATIVE", "INSTREAM": "PREROLL"}
+    template_label = label_map.get(ad_format, ad_format)
+
+    # Try loading from templates.json
+    loaded = _get_loaded_templates()
+    if loaded:
+        label_data = loaded.get(template_label)
+        if label_data:
+            type_data = label_data.get(campaign_type_title)
+            if type_data:
+                category_data = type_data.get(content_category)
+                if category_data:
+                    logger.debug(
+                        f"Using templates.json: {template_label}/{campaign_type_title}/{content_category}"
+                    )
+                    return category_data
+
+    # Fallback to hardcoded templates (orientation-agnostic, straight-only)
+    if content_category != "straight":
+        logger.warning(
+            f"No templates.json entry for {template_label}/{campaign_type_title}/{content_category}. "
+            f"Falling back to hardcoded templates (straight only). "
+            f"Run create_templates.py to generate orientation-specific templates."
+        )
+
     if campaign_type_title == "Remarketing":
         return REMARKETING_TEMPLATES[ad_format]
     else:

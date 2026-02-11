@@ -26,6 +26,12 @@ class Config:
     # No need to configure campaign IDs in .env
     
     # ====================================
+    # OpenRouter (Translation API)
+    # ====================================
+    OPENROUTER_API_KEY: str = os.getenv('OPENROUTER_API_KEY', '')
+    OPENROUTER_MODEL: str = os.getenv('OPENROUTER_MODEL', 'deepseek/deepseek-chat')
+
+    # ====================================
     # File Paths
     # ====================================
     BASE_DIR: Path = Path(__file__).parent.parent

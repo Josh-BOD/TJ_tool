@@ -1,5 +1,5 @@
-group,keywords,keyword_matches,gender,geo,ad_format,campaign_type,bid_type,variants,csv_file,target_cpa,per_source_budget,max_bid,frequency_cap,max_daily_budget,enabled
-Milfs,,,,US,NATIVE,Remarketing,CPM,"desktop,all mobile",Your_Native_Ads.csv,50,200,10,2,250,TRUE
-Latina,,,,US,INSTREAM,Remarketing,CPM,"desktop,all mobile",Your_PreRoll_Ads.csv,50,200,10,2,250,TRUE
-Cougars,milf;cougar,broad,,US,NATIVE,Remarketing,CPA,"desktop,all mobile",Your_Native_Ads.csv,55,100,11,1,275,TRUE
+group,keywords,keyword_matches,gender,geo,ad_format,campaign_type,bid_type,cpm_adjust,variants,csv_file,target_cpa,per_source_budget,max_bid,frequency_cap,max_daily_budget,t,enabled
+Milfs,,,,US,NATIVE,Remarketing,CPM,10,"desktop,all mobile",Your_Native_Ads.csv,50,200,10,2,250,,TRUE
+Latina,,,,US,INSTREAM,Remarketing,CPM,,"desktop,all mobile",Your_PreRoll_Ads.csv,50,200,10,2,250,1,TRUE
+Cougars,milf;cougar,broad,,US,NATIVE,Remarketing,CPA,,"desktop,all mobile",Your_Native_Ads.csv,55,100,11,1,275,2A,TRUE
 

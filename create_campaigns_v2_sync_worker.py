@@ -78,7 +78,8 @@ def upload_csv_to_campaign(page, csv_path: Path, campaign_name: str, ad_format: 
 def create_campaign_set(page, campaign: CampaignDefinition, csv_dir: Path):
     """Create all variants for a campaign definition."""
     ad_format = campaign.settings.ad_format
-    creator = CampaignCreator(page, ad_format=ad_format)
+    content_category = campaign.settings.content_category
+    creator = CampaignCreator(page, ad_format=ad_format, content_category=content_category)
     
     csv_path = csv_dir / campaign.csv_file
     if not csv_path.exists():
