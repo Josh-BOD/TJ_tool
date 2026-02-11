@@ -12,7 +12,7 @@ from collections import deque
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
-from models import CreateJobRequest, JobResponse, HealthResponse, AdCsvListResponse
+from worker_server.models import CreateJobRequest, JobResponse, HealthResponse, AdCsvListResponse
 
 app = FastAPI(title="Campaign Builder Worker")
 
