@@ -305,15 +305,20 @@ class MultilingualCSVGenerator:
             result[row_idx][col_name] = trans_text
 
         # Update Ad Name to reflect language (replace _EN_ or add lang suffix)
+        # TJ enforces a 65-character max on ad names
+        max_ad_name = 65
         for ad in result:
             ad_name = ad.get("Ad Name", "")
             if ad_name:
                 # If ad name contains _EN_, replace with _LANG_
                 if "_EN_" in ad_name:
-                    ad["Ad Name"] = ad_name.replace("_EN_", f"_{lang_code.upper()}_")
+                    new_name = ad_name.replace("_EN_", f"_{lang_code.upper()}_")
                 else:
                     # Append language code
-                    ad["Ad Name"] = f"{ad_name}_{lang_code.upper()}"
+                    new_name = f"{ad_name}_{lang_code.upper()}"
+                if len(new_name) > max_ad_name:
+                    new_name = new_name[:max_ad_name]
+                ad["Ad Name"] = new_name
 
         return result
 
