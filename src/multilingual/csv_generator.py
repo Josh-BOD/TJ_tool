@@ -317,7 +317,16 @@ class MultilingualCSVGenerator:
                     # Append language code
                     new_name = f"{ad_name}_{lang_code.upper()}"
                 if len(new_name) > max_ad_name:
-                    new_name = new_name[:max_ad_name]
+                    # Shorten by removing filler words from the middle,
+                    # preserving the ID suffix (e.g. _ID-AB239B36-VID)
+                    for filler in ["_Generic", "_Real", "_NSFW"]:
+                        if len(new_name) <= max_ad_name:
+                            break
+                        new_name = new_name.replace(filler, "", 1)
+                    # Last resort: truncate but keep last 16 chars (ID suffix)
+                    if len(new_name) > max_ad_name:
+                        suffix = new_name[-16:]
+                        new_name = new_name[:max_ad_name - 16] + suffix
                 ad["Ad Name"] = new_name
 
         return result
