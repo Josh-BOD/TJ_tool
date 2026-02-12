@@ -185,7 +185,7 @@ class MultilingualCSVGenerator:
                         row["content_category"] = category
                         row["campaign_type"] = "Remarketing" if is_remarketing else "Standard"
                         row["group"] = lang.get("group", "") or self.group_name
-                        row["language"] = code.upper()
+                        row["language"] = lang.get("tj_language", "").strip().upper() or code.upper()
                         row["labels"] = lang.get("labels", "") or (lang_name if lang_name else "")
                         row["csv_file"] = f"ads/{ads_files[(category, code)]}"
                         if is_remarketing:
