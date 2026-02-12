@@ -366,8 +366,8 @@ def _run_job_parallel(job_id: str, csv_path: str, csv_content: str, dry_run: boo
         with job_lock:
             jobs[job_id]["log_lines"].append(f"Split into {actual_workers} worker chunks")
 
-        # Write worker CSV files to Campaign_Creation dir so ad CSV paths resolve correctly
-        temp_dir = TJ_TOOL_DIR / "data" / "input" / "Campaign_Creation"
+        # Write worker CSV files to same dir as original CSV so relative ad CSV paths resolve
+        temp_dir = Path(actual_csv_path).parent
         temp_dir.mkdir(parents=True, exist_ok=True)
         worker_csv_paths: list[Path] = []
         for i, chunk in enumerate(chunks):
@@ -596,11 +596,16 @@ def create_job(req: CreateJobRequest):
     job_id = str(uuid.uuid4())
     num_workers = max(1, min(4, req.workers))
 
-    # Write CSV into the appropriate input dir based on flow
-    if req.flow == "template":
+    # Write CSV into the appropriate input dir based on flow/format
+    # so that relative ad CSV paths (e.g. ads/foo.csv) resolve correctly
+    detected_format = _detect_csv_format(req.csv_content)
+    explicit_flow = req.flow or detected_format
+    if explicit_flow == "template":
         input_dir = TEMPLATE_DIR
-    else:
+    elif explicit_flow == "multilingual" or detected_format == "multilingual":
         input_dir = TJ_TOOL_DIR / "data" / "input" / "Multilingual_Campaign_Creation"
+    else:
+        input_dir = CAMPAIGN_CREATION_DIR
     input_dir.mkdir(parents=True, exist_ok=True)
     csv_path = input_dir / "temp_batch_galactus.csv"
     csv_path.write_text(req.csv_content)
