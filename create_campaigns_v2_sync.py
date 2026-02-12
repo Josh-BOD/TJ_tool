@@ -143,6 +143,11 @@ def run_sync():
     parser.add_argument("--no-headless", action="store_true", default=True, help="Show browser (default)")
     parser.add_argument("--headless", action="store_true", help="Run headless")
     parser.add_argument("--slow-mo", type=int, default=500, help="Slow motion delay in ms")
+    # Parallel worker args
+    parser.add_argument("--window-position", type=str, help="Chromium window position as X,Y (e.g. '0,0')")
+    parser.add_argument("--window-size", type=str, help="Chromium window size as W,H (e.g. '960,540')")
+    parser.add_argument("--use-session", action="store_true", help="Load saved session instead of manual login")
+    parser.add_argument("--session-file", type=str, default="data/session/tj_session.json", help="Path to session JSON file")
     args = parser.parse_args()
 
     # Determine input file: --input flag takes priority, else temp batch file
@@ -184,28 +189,56 @@ def run_sync():
     
     # Launch browser & authenticate (same pattern as Pause_ads_V1.py)
     with sync_playwright() as p:
+        # Build Chromium args for window positioning (parallel workers)
+        chromium_args = []
+        if args.window_position:
+            chromium_args.append(f'--window-position={args.window_position}')
+        if args.window_size:
+            chromium_args.append(f'--window-size={args.window_size}')
+
         browser = p.chromium.launch(
             headless=args.headless,
-            slow_mo=args.slow_mo
+            slow_mo=args.slow_mo,
+            args=chromium_args if chromium_args else None,
         )
-        
-        context = browser.new_context(
-            viewport={'width': 1920, 'height': 1080}
-        )
-        
+
+        # Derive viewport from window size (subtract ~80px for chrome UI)
+        vp_w, vp_h = 1920, 1080
+        if args.window_size:
+            parts = args.window_size.split(',')
+            vp_w, vp_h = int(parts[0]), int(parts[1]) - 80
+
+        context_kwargs = {'viewport': {'width': vp_w, 'height': vp_h}}
+        if args.use_session and Path(args.session_file).exists():
+            context_kwargs['storage_state'] = args.session_file
+        context = browser.new_context(**context_kwargs)
+
         page = context.new_page()
         page.set_default_timeout(30000)
-        
+
         # Login using TJAuthenticator (solve CAPTCHA manually if prompted)
         authenticator = TJAuthenticator(Config.TJ_USERNAME, Config.TJ_PASSWORD)
-        
-        logger.info("Logging in (solve reCAPTCHA manually if prompted)...")
-        if not authenticator.manual_login(page, timeout=180):
-            logger.error("Login failed!")
-            browser.close()
-            return
-        
-        authenticator.save_session(context)
+
+        if args.use_session:
+            # Try loading session — fall back to manual login if expired
+            page.goto('https://advertiser.trafficjunky.com/', wait_until='domcontentloaded')
+            page.wait_for_timeout(3000)
+            if authenticator.is_logged_in(page):
+                logger.info("✓ Session loaded successfully")
+            else:
+                logger.warning("Session expired, falling back to manual login...")
+                if not authenticator.manual_login(page, timeout=180):
+                    logger.error("Login failed!")
+                    browser.close()
+                    return
+                authenticator.save_session(context)
+        else:
+            logger.info("Logging in (solve reCAPTCHA manually if prompted)...")
+            if not authenticator.manual_login(page, timeout=180):
+                logger.error("Login failed!")
+                browser.close()
+                return
+            authenticator.save_session(context)
         logger.info("✓ Logged in successfully")
         
         # Process each campaign

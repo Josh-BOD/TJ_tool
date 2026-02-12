@@ -13,22 +13,20 @@ from typing import Dict, Any, Optional
 logger = logging.getLogger(__name__)
 
 
-# Template campaign IDs by ad format (CONSTANTS - never change)
-# Used for STANDARD campaigns (keyword targeting)
+# Legacy template campaign IDs (V1 — straight only, kept for backward compat)
 TEMPLATE_CAMPAIGNS = {
     "NATIVE": {
         "desktop": {
-            "id": "1013076141",
-            "name": "TEMPLATE_EN_NATIVE_CPA_ALL_KEY-ENTER-Keywords_DESK_M_JB",
+            "id": "1013321421",
+            "name": "TEMPLATE_NATIVE_STRAIGHT_STD_CPM_DESK",
             "device": "desktop"
         },
         "ios": {
-            "id": "1013076221", 
-            "name": "TEMPLATE_EN_NATIVE_CPA_ALL_KEY-ENTERKEYWORDS_iOS_M_JB",
+            "id": "1013321431",
+            "name": "TEMPLATE_NATIVE_STRAIGHT_STD_CPM_iOS",
             "device": "mobile",
             "os": "iOS"
         },
-        # Android clones from iOS campaign, not from template
         "android": {
             "clone_from": "ios",
             "device": "mobile",
@@ -47,7 +45,6 @@ TEMPLATE_CAMPAIGNS = {
             "device": "mobile",
             "os": "iOS"
         },
-        # Android clones from iOS campaign, not from template
         "android": {
             "clone_from": "ios",
             "device": "mobile",
@@ -56,22 +53,20 @@ TEMPLATE_CAMPAIGNS = {
     }
 }
 
-# Remarketing template campaign IDs by ad format (CONSTANTS - never change)
-# Used for REMARKETING campaigns (audience retargeting)
+# Legacy remarketing templates (V1 — straight only, kept for backward compat)
 REMARKETING_TEMPLATES = {
     "NATIVE": {
         "desktop": {
-            "id": "1013186231",
-            "name": "TEMPLATE_EN_NATIVE_RMK_DESK",
+            "id": "1013321511",
+            "name": "TEMPLATE_NATIVE_STRAIGHT_RMK_CPM_DESK",
             "device": "desktop"
         },
         "all_mobile": {
-            "id": "1013186221",
-            "name": "TEMPLATE_EN_NATIVE_RMK_MOB_ALL",
+            "id": "1013321541",
+            "name": "TEMPLATE_NATIVE_STRAIGHT_RMK_CPM_MOB_ALL",
             "device": "mobile",
-            "os": ["iOS", "Android"]  # Both OS combined
+            "os": ["iOS", "Android"]
         },
-        # For separate iOS/Android, clone from all_mobile and modify OS targeting
         "ios": {
             "clone_from": "all_mobile",
             "device": "mobile",
@@ -83,7 +78,7 @@ REMARKETING_TEMPLATES = {
             "os": "Android"
         }
     },
-    "INSTREAM": {  # Preroll
+    "INSTREAM": {
         "desktop": {
             "id": "1013186211",
             "name": "TEMPLATE_EN_PREROLL_RMK_DESK",
@@ -93,9 +88,8 @@ REMARKETING_TEMPLATES = {
             "id": "1013186201",
             "name": "TEMPLATE_EN_PREROLL_RMK_MOB_ALL",
             "device": "mobile",
-            "os": ["iOS", "Android"]  # Both OS combined
+            "os": ["iOS", "Android"]
         },
-        # For separate iOS/Android, clone from all_mobile and modify OS targeting
         "ios": {
             "clone_from": "all_mobile",
             "device": "mobile",
@@ -107,6 +101,47 @@ REMARKETING_TEMPLATES = {
             "os": "Android"
         }
     }
+}
+
+# V2 category-aware templates — embedded so they work even without config/templates.json
+# Source of truth: config/templates.json (this is a hardcoded fallback copy)
+BUILTIN_TEMPLATES = {
+    "NATIVE": {
+        "Standard": {
+            "straight": {
+                "desktop": {"id": "1013321421", "name": "TEMPLATE_NATIVE_STRAIGHT_STD_CPM_DESK"},
+                "ios": {"id": "1013321431", "name": "TEMPLATE_NATIVE_STRAIGHT_STD_CPM_iOS"},
+                "android": {"clone_from": "ios"},
+            },
+            "gay": {
+                "desktop": {"id": "1013321461", "name": "TEMPLATE_NATIVE_GAY_STD_CPM_DESK"},
+                "ios": {"id": "1013321471", "name": "TEMPLATE_NATIVE_GAY_STD_CPM_iOS"},
+                "android": {"clone_from": "ios"},
+            },
+            "trans": {
+                "desktop": {"id": "1013321491", "name": "TEMPLATE_NATIVE_TRANS_STD_CPM_DESK"},
+                "ios": {"id": "1013321501", "name": "TEMPLATE_NATIVE_TRANS_STD_CPM_iOS"},
+                "android": {"clone_from": "ios"},
+            },
+        },
+        "Remarketing": {
+            "straight": {
+                "desktop": {"id": "1013321511", "name": "TEMPLATE_NATIVE_STRAIGHT_RMK_CPM_DESK"},
+                "ios": {"id": "1013321541", "name": "TEMPLATE_NATIVE_STRAIGHT_RMK_CPM_iOS"},
+                "android": {"clone_from": "ios"},
+            },
+            "gay": {
+                "desktop": {"id": "1013321551", "name": "TEMPLATE_NATIVE_GAY_RMK_CPM_DESK"},
+                "ios": {"id": "1013321571", "name": "TEMPLATE_NATIVE_GAY_RMK_CPM_iOS"},
+                "android": {"clone_from": "ios"},
+            },
+            "trans": {
+                "desktop": {"id": "1013321591", "name": "TEMPLATE_NATIVE_TRANS_RMK_CPM_DESK"},
+                "ios": {"id": "1013321601", "name": "TEMPLATE_NATIVE_TRANS_RMK_CPM_iOS"},
+                "android": {"clone_from": "ios"},
+            },
+        },
+    },
 }
 
 # Legacy template campaigns (for backward compatibility with V1)
@@ -335,9 +370,10 @@ def get_templates(ad_format: str, campaign_type: str = "Standard", content_categ
     """
     Get template campaigns for a specific ad format, campaign type, and content category.
 
-    Looks up orientation-specific templates from config/templates.json first.
-    Falls back to hardcoded TEMPLATE_CAMPAIGNS/REMARKETING_TEMPLATES if JSON is missing
-    or doesn't have the requested combination.
+    Resolution order:
+    1. config/templates.json (file on disk, managed by create_templates.py)
+    2. BUILTIN_TEMPLATES (hardcoded V2 category-aware templates in this file)
+    3. Legacy TEMPLATE_CAMPAIGNS / REMARKETING_TEMPLATES (flat, straight-only)
 
     Args:
         ad_format: "NATIVE" or "INSTREAM"
@@ -363,28 +399,40 @@ def get_templates(ad_format: str, campaign_type: str = "Standard", content_categ
     label_map = {"NATIVE": "NATIVE", "INSTREAM": "PREROLL"}
     template_label = label_map.get(ad_format, ad_format)
 
-    # Try loading from templates.json
+    # Helper to look up category templates from a nested dict
+    def _lookup(source: Dict, source_name: str) -> Optional[Dict]:
+        label_data = source.get(template_label)
+        if not label_data:
+            return None
+        type_data = label_data.get(campaign_type_title)
+        if not type_data:
+            return None
+        category_data = type_data.get(content_category)
+        if category_data:
+            logger.info(
+                f"Templates [{source_name}]: {template_label}/{campaign_type_title}/{content_category} "
+                f"→ desktop={category_data.get('desktop', {}).get('id', '?')}, ios={category_data.get('ios', {}).get('id', '?')}"
+            )
+            return category_data
+        return None
+
+    # 1. Try config/templates.json
     loaded = _get_loaded_templates()
     if loaded:
-        label_data = loaded.get(template_label)
-        if label_data:
-            type_data = label_data.get(campaign_type_title)
-            if type_data:
-                category_data = type_data.get(content_category)
-                if category_data:
-                    logger.debug(
-                        f"Using templates.json: {template_label}/{campaign_type_title}/{content_category}"
-                    )
-                    return category_data
+        result = _lookup(loaded, "templates.json")
+        if result:
+            return result
 
-    # Fallback to hardcoded templates (orientation-agnostic, straight-only)
-    if content_category != "straight":
-        logger.warning(
-            f"No templates.json entry for {template_label}/{campaign_type_title}/{content_category}. "
-            f"Falling back to hardcoded templates (straight only). "
-            f"Run create_templates.py to generate orientation-specific templates."
-        )
+    # 2. Try BUILTIN_TEMPLATES (hardcoded V2 category-aware)
+    result = _lookup(BUILTIN_TEMPLATES, "BUILTIN")
+    if result:
+        return result
 
+    # 3. Legacy fallback (straight-only, flat structure)
+    logger.warning(
+        f"No category-aware templates for {template_label}/{campaign_type_title}/{content_category}. "
+        f"Using legacy fallback (straight only)."
+    )
     if campaign_type_title == "Remarketing":
         return REMARKETING_TEMPLATES[ad_format]
     else:
