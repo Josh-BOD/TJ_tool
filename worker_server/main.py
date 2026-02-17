@@ -2,9 +2,10 @@
 FastAPI worker server for Campaign Builder.
 Runs on Mac Mini Pros to execute campaign creation jobs.
 
-Supports two CSV formats:
+Supports CSV formats:
 - Multilingual: has lang_code, ad_csv_straight columns → runs create_multilingual.py
 - Standard: has group, csv_file, variants, enabled → runs create_campaigns_v2_sync.py
+- V4: has ad_format_type column → runs create_campaigns_v4.py
 
 Supports parallel browser workers (1-4) with screen quadrant positioning and session sharing.
 """
@@ -40,6 +41,8 @@ MULTILINGUAL_SCRIPT = TJ_TOOL_DIR / "create_multilingual.py"
 STANDARD_SCRIPT = TJ_TOOL_DIR / "create_campaigns_v2_sync.py"
 TEMPLATE_SCRIPT = TJ_TOOL_DIR / "create_templates.py"
 TEMPLATE_DIR = TJ_TOOL_DIR / "data" / "input" / "Template_Creation"
+V4_SCRIPT = TJ_TOOL_DIR / "create_campaigns_v4.py"
+V4_DIR = TJ_TOOL_DIR / "data" / "output" / "V4_Campaign_Export"
 SESSION_FILE = TJ_TOOL_DIR / "data" / "session" / "tj_session.json"
 LOG_DIR = TJ_TOOL_DIR / "logs"
 
@@ -53,7 +56,7 @@ CAMPAIGN_CSV_PATTERN = re.compile(r'Campaign CSV:\s*(.+)')
 def _get_ad_csvs() -> dict[str, list[str]]:
     """List available ad CSV files from both input directories."""
     result: dict[str, list[str]] = {}
-    for label, directory in [("Campaign_Creation", CAMPAIGN_CREATION_DIR), ("Multilingual_Campaign_Creation", MULTILINGUAL_DIR)]:
+    for label, directory in [("Campaign_Creation", CAMPAIGN_CREATION_DIR), ("Multilingual_Campaign_Creation", MULTILINGUAL_DIR), ("V4_Campaign_Export", V4_DIR)]:
         if directory.exists():
             result[label] = sorted([
                 f.name for f in directory.iterdir()
@@ -70,6 +73,8 @@ def _detect_csv_format(csv_content: str) -> str:
     except StopIteration:
         return "standard"
 
+    if "ad_format_type" in headers:
+        return "v4"
     if "lang_code" in headers:
         return "multilingual"
     return "standard"
@@ -92,7 +97,7 @@ def _build_command(csv_path: str, csv_content: str, dry_run: bool, flow: str | N
 
     Returns (command, flow_used, flow_source) where flow_source is 'explicit' or 'auto-detected'.
     """
-    if flow in ("multilingual", "standard", "template"):
+    if flow in ("multilingual", "standard", "template", "v4"):
         fmt = flow
         flow_source = "explicit"
     else:
@@ -118,6 +123,10 @@ def _build_command(csv_path: str, csv_content: str, dry_run: bool, flow: str | N
                 "--format", params["ad_format"],
                 "--group", params["group"],
             ]
+    elif fmt == "v4":
+        cmd = [sys.executable, str(V4_SCRIPT), csv_path]
+        if dry_run:
+            cmd.append("--dry-run")
     elif fmt == "template":
         cmd = [
             sys.executable, str(TEMPLATE_SCRIPT),
@@ -398,6 +407,10 @@ def _run_job_parallel(job_id: str, csv_path: str, csv_content: str, dry_run: boo
                     cmd.extend(["--use-session", "--session-file", str(SESSION_FILE)])
                 if dry_run:
                     cmd.append("--dry-run")
+            elif actual_flow == "v4":
+                cmd = [sys.executable, str(V4_SCRIPT), str(chunk_csv)]
+                if dry_run:
+                    cmd.append("--dry-run")
             elif actual_flow == "template":
                 cmd = [
                     sys.executable, str(TEMPLATE_SCRIPT),
@@ -602,6 +615,8 @@ def create_job(req: CreateJobRequest):
     explicit_flow = req.flow or detected_format
     if explicit_flow == "template":
         input_dir = TEMPLATE_DIR
+    elif explicit_flow == "v4" or detected_format == "v4":
+        input_dir = V4_DIR
     elif explicit_flow == "multilingual" or detected_format == "multilingual":
         input_dir = TJ_TOOL_DIR / "data" / "input" / "Multilingual_Campaign_Creation"
     else:

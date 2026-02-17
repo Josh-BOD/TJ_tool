@@ -8,7 +8,7 @@ class CreateJobRequest(BaseModel):
     csv_content: str
     dry_run: bool = False
     filename: str = "campaign_builder_input.csv"
-    flow: Optional[str] = None  # "multilingual", "standard", "template", or None for auto-detect
+    flow: Optional[str] = None  # "multilingual", "standard", "template", "v4", or None for auto-detect
     workers: int = 4  # 1-4 parallel browser workers
 
 
