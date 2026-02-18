@@ -269,7 +269,7 @@ def _launch_browser_and_auth(p, authenticator, headless, slow_mo):
     return browser, page
 
 
-def run_v4(csv_path: Path, dry_run: bool = False, headless: bool = False, slow_mo: int = 500, name_prefix: str = ""):
+def run_v4(csv_path: Path, dry_run: bool = False, headless: bool = False, slow_mo: int = 500, name_prefix: str = "", live: bool = False):
     """Main runner for V4 campaign creation."""
     logger.info("=" * 60)
     logger.info("Campaign Creation V4 — Full-Field Automation")
@@ -319,8 +319,11 @@ def run_v4(csv_path: Path, dry_run: bool = False, headless: bool = False, slow_m
         results = []
         total_created = 0
         total_failed = 0
+        abort = False
 
         for i, config in enumerate(enabled, 1):
+            if abort:
+                break
             logger.info(f"\n{'#' * 60}")
             logger.info(f"Campaign {i}/{len(enabled)}: {config.group}")
             logger.info(f"  Keywords: {', '.join(config.keywords) or '(none)'}")
@@ -334,34 +337,41 @@ def run_v4(csv_path: Path, dry_run: bool = False, headless: bool = False, slow_m
                     total_created += 1
                 except (V4CreationError, Exception) as e:
                     error_msg = str(e)
-                    is_crash = "browser has been closed" in error_msg or "Target page" in error_msg
+                    is_browser_closed = "browser has been closed" in error_msg or "Target page" in error_msg
 
-                    if is_crash:
-                        logger.warning(f"  [{variant}] Browser crashed, relaunching...")
-                        try:
-                            browser.close()
-                        except Exception:
-                            pass
-
-                        browser, page = _launch_browser_and_auth(p, authenticator, headless, slow_mo)
-                        if not browser:
-                            logger.error("  Could not relaunch browser — aborting")
-                            results.append(("", "", variant, f"FAILED: {e}"))
+                    if is_browser_closed:
+                        if live:
+                            # Live mode: relaunch browser and retry
+                            logger.warning(f"  [{variant}] Browser closed, relaunching (live mode)...")
+                            try:
+                                browser.close()
+                            except Exception:
+                                pass
+                            browser, page = _launch_browser_and_auth(p, authenticator, headless, slow_mo)
+                            if not browser:
+                                logger.error("  Could not relaunch browser — aborting")
+                                results.append(("", "", variant, f"FAILED: {e}"))
+                                total_failed += 1
+                                abort = True
+                                break
+                            creator = V4CampaignCreator(page, name_prefix=name_prefix)
+                            try:
+                                cid, cname = creator.create_campaign(config, variant, csv_dir)
+                                results.append((cid, cname, variant, "Created"))
+                                total_created += 1
+                                continue
+                            except Exception as retry_e:
+                                logger.error(f"  FAILED [{variant}] (retry): {retry_e}")
+                                results.append(("", "", variant, f"FAILED: {retry_e}"))
+                                total_failed += 1
+                                continue
+                        else:
+                            # Test mode: stop immediately
+                            logger.warning(f"  [{variant}] Browser was closed — stopping")
+                            results.append(("", "", variant, f"STOPPED: browser closed"))
                             total_failed += 1
+                            abort = True
                             break
-                        creator = V4CampaignCreator(page, name_prefix=name_prefix)
-
-                        # Retry this variant with fresh browser
-                        try:
-                            cid, cname = creator.create_campaign(config, variant, csv_dir)
-                            results.append((cid, cname, variant, "Created"))
-                            total_created += 1
-                            continue
-                        except Exception as retry_e:
-                            logger.error(f"  FAILED [{variant}] (retry): {retry_e}")
-                            results.append(("", "", variant, f"FAILED: {retry_e}"))
-                            total_failed += 1
-                            continue
 
                     # Non-crash failure
                     logger.error(f"  FAILED [{variant}]: {e}")
@@ -417,12 +427,14 @@ Examples:
     parser.add_argument('--prefix', type=str, default='', help='Prefix to prepend to campaign names (e.g. TEST_)')
     parser.add_argument('--upload-only', type=str, metavar='CAMPAIGN_ID',
                         help='Skip creation, just upload ads to an existing campaign')
+    parser.add_argument('--live', action='store_true',
+                        help='Live mode: auto-recover from browser crashes (used by worker server)')
 
     args = parser.parse_args()
     if args.upload_only:
         upload_ads_only(Path(args.csv_file), args.upload_only, headless=args.headless, slow_mo=args.slow_mo)
     else:
-        run_v4(Path(args.csv_file), dry_run=args.dry_run, headless=args.headless, slow_mo=args.slow_mo, name_prefix=args.prefix)
+        run_v4(Path(args.csv_file), dry_run=args.dry_run, headless=args.headless, slow_mo=args.slow_mo, name_prefix=args.prefix, live=args.live)
 
 
 if __name__ == "__main__":

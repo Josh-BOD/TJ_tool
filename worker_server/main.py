@@ -124,7 +124,7 @@ def _build_command(csv_path: str, csv_content: str, dry_run: bool, flow: str | N
                 "--group", params["group"],
             ]
     elif fmt == "v4":
-        cmd = [sys.executable, str(V4_SCRIPT), csv_path]
+        cmd = [sys.executable, str(V4_SCRIPT), csv_path, "--live"]
         if dry_run:
             cmd.append("--dry-run")
     elif fmt == "template":
@@ -408,7 +408,7 @@ def _run_job_parallel(job_id: str, csv_path: str, csv_content: str, dry_run: boo
                 if dry_run:
                     cmd.append("--dry-run")
             elif actual_flow == "v4":
-                cmd = [sys.executable, str(V4_SCRIPT), str(chunk_csv)]
+                cmd = [sys.executable, str(V4_SCRIPT), str(chunk_csv), "--live"]
                 if dry_run:
                     cmd.append("--dry-run")
             elif actual_flow == "template":
