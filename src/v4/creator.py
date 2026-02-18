@@ -89,26 +89,33 @@ class V4CampaignCreator:
 
             # Step 2 also handles keywords — save & continue past it
             _handle_keywords(self.page, config)
+            logger.info(f"  [Nav] Step 2 done, URL before save: {self.page.url}")
             click_save_and_continue(self.page)
+            logger.info(f"  [Nav] After step 2 save, URL: {self.page.url}")
 
             # ── Step 3: Tracking & Sources ────────────────────────
             if not check_session(self.page):
                 raise V4CreationError("Session expired before Step 3", orphan_id=campaign_id)
             import time as _time; _time.sleep(2)
             step3.configure_step3(self.page, config)
+            logger.info(f"  [Nav] Step 3 done, URL before save: {self.page.url}")
             click_save_and_continue(self.page)
+            logger.info(f"  [Nav] After step 3 save, URL: {self.page.url}")
 
             # ── Step 4: Schedule & Budget ─────────────────────────
             if not check_session(self.page):
                 raise V4CreationError("Session expired before Step 4", orphan_id=campaign_id)
             import time as _time; _time.sleep(2)
             step4.configure_step4(self.page, config)
+            logger.info(f"  [Nav] Step 4 done, URL before save: {self.page.url}")
             click_save_and_continue(self.page)
+            logger.info(f"  [Nav] After step 4 save, URL: {self.page.url}")
 
             # ── Step 5: Ad Settings ───────────────────────────────
             if not check_session(self.page):
                 raise V4CreationError("Session expired before Step 5", orphan_id=campaign_id)
             import time as _time; _time.sleep(2)
+            logger.info(f"  [Nav] Starting step 5, URL: {self.page.url}")
             step5.configure_step5(self.page, config, csv_dir, campaign_name)
 
             logger.info(f"  Campaign created: {campaign_name} (ID: {campaign_id})")

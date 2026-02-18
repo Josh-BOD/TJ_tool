@@ -102,7 +102,20 @@ def _configure_frequency_cap(page: Page, config: V4CampaignConfig):
         try:
             page.fill('input#frequency_cap_every', "")
             page.fill('input#frequency_cap_every', str(config.frequency_cap_every))
-            logger.info(f"    Frequency cap every: {config.frequency_cap_every}h")
+            # Check if there's a unit selector (hours/days) and log current state
+            unit_info = page.evaluate('''() => {
+                // Check for select/dropdown near frequency cap
+                const sel = document.querySelector("#frequency_cap_type, select[name*='frequency'], select[name*='cap_type']");
+                if (sel) return "select found: " + sel.id + " value=" + sel.value + " options=" + [...sel.options].map(o => o.value + ":" + o.text).join(",");
+                // Check for any nearby selects
+                const container = document.querySelector("#campaign_frequency_capping, .frequency-cap-section");
+                if (container) {
+                    const selects = container.querySelectorAll("select");
+                    if (selects.length) return "container selects: " + [...selects].map(s => s.id + "=" + s.value).join(", ");
+                }
+                return "no unit selector found";
+            }''')
+            logger.info(f"    Frequency cap every: {config.frequency_cap_every} (unit: {unit_info})")
         except Exception as e:
             logger.warning(f"    Could not set frequency cap interval: {e}")
 

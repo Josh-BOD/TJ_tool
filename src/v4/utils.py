@@ -149,11 +149,14 @@ def click_save_and_continue(page: Page):
             try:
                 locator = page.locator(sel).first
                 if locator.count() > 0 and locator.is_visible(timeout=2000):
+                    logger.info(f"  [Save] Clicking: {sel} (attempt {attempt+1})")
                     locator.click(timeout=60000)
                     time.sleep(2)
                     dismiss_modals(page)
                     if page.url != url_before:
+                        logger.info(f"  [Save] Navigated to: {page.url}")
                         return
+                    logger.info(f"  [Save] URL unchanged after click, still: {page.url}")
                     break  # found a button but page didn't navigate — retry
             except Exception as e:
                 logger.debug(f"  Save button {sel}: {e}")
