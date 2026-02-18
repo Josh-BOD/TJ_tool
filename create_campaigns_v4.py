@@ -218,6 +218,57 @@ def upload_ads_only(csv_path: Path, campaign_id: str, headless: bool = False, sl
 
 # ─── Main Run ────────────────────────────────────────────────────
 
+def _launch_browser_and_auth(p, authenticator, headless, slow_mo):
+    """Launch browser and authenticate. Returns (browser, page)."""
+    browser = p.chromium.launch(headless=headless, slow_mo=slow_mo)
+
+    context = authenticator.load_session(browser)
+    logged_in = False
+    if context:
+        context.set_default_timeout(30000)
+        page = context.new_page()
+        page.set_default_timeout(30000)
+        try:
+            page.goto("https://advertiser.trafficjunky.com/campaign/drafts/bid/create",
+                      wait_until="domcontentloaded", timeout=30000)
+            try:
+                page.wait_for_load_state("networkidle", timeout=15000)
+            except Exception:
+                pass
+            import time as _t; _t.sleep(2)
+            url = page.url
+            title = page.title()
+            has_form = page.evaluate('document.querySelectorAll("input, select").length > 0')
+            if "sign-in" not in url and "404" not in title and has_form:
+                logged_in = True
+                logger.info("Logged in via saved session")
+            else:
+                logger.info("Saved session invalid")
+                page.close()
+                context.close()
+        except Exception as e:
+            logger.info(f"Saved session check failed: {e}")
+            try:
+                page.close()
+                context.close()
+            except Exception:
+                pass
+
+    if not logged_in:
+        context = browser.new_context(viewport={'width': 1920, 'height': 1080})
+        page = context.new_page()
+        page.set_default_timeout(30000)
+        logger.info("Logging in (solve reCAPTCHA if prompted)...")
+        if not authenticator.manual_login(page, timeout=180):
+            logger.error("Login failed!")
+            browser.close()
+            return None, None
+
+    authenticator.save_session(context)
+    logger.info("Logged in successfully")
+    return browser, page
+
+
 def run_v4(csv_path: Path, dry_run: bool = False, headless: bool = False, slow_mo: int = 500, name_prefix: str = ""):
     """Main runner for V4 campaign creation."""
     logger.info("=" * 60)
@@ -258,51 +309,10 @@ def run_v4(csv_path: Path, dry_run: bool = False, headless: bool = False, slow_m
 
     # Launch browser
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=headless, slow_mo=slow_mo)
-
-        # Auth — try saved session first
         authenticator = TJAuthenticator(Config.TJ_USERNAME, Config.TJ_PASSWORD)
-        context = authenticator.load_session(browser)
-        logged_in = False
-        if context:
-            context.set_default_timeout(30000)
-            page = context.new_page()
-            page.set_default_timeout(30000)
-            try:
-                page.goto("https://advertiser.trafficjunky.com/campaign/drafts/bid/create",
-                          wait_until="domcontentloaded", timeout=30000)
-                try:
-                    page.wait_for_load_state("networkidle", timeout=15000)
-                except Exception:
-                    pass
-                import time as _t; _t.sleep(2)
-                url = page.url
-                title = page.title()
-                has_form = page.evaluate('document.querySelectorAll("input, select").length > 0')
-                if "sign-in" not in url and "404" not in title and has_form:
-                    logged_in = True
-                    logger.info("Logged in via saved session")
-                else:
-                    logger.info(f"Saved session invalid")
-                    page.close()
-                    context.close()
-            except Exception as e:
-                logger.info(f"Saved session check failed: {e}")
-                page.close()
-                context.close()
-
-        if not logged_in:
-            context = browser.new_context(viewport={'width': 1920, 'height': 1080})
-            page = context.new_page()
-            page.set_default_timeout(30000)
-            logger.info("Logging in (solve reCAPTCHA if prompted)...")
-            if not authenticator.manual_login(page, timeout=180):
-                logger.error("Login failed!")
-                browser.close()
-                return
-
-        authenticator.save_session(context)
-        logger.info("Logged in successfully")
+        browser, page = _launch_browser_and_auth(p, authenticator, headless, slow_mo)
+        if not browser:
+            return
 
         # Create campaigns
         creator = V4CampaignCreator(page, name_prefix=name_prefix)
@@ -322,19 +332,48 @@ def run_v4(csv_path: Path, dry_run: bool = False, headless: bool = False, slow_m
                     cid, cname = creator.create_campaign(config, variant, csv_dir)
                     results.append((cid, cname, variant, "Created"))
                     total_created += 1
-                except V4CreationError as e:
+                except (V4CreationError, Exception) as e:
+                    error_msg = str(e)
+                    is_crash = "browser has been closed" in error_msg or "Target page" in error_msg
+
+                    if is_crash:
+                        logger.warning(f"  [{variant}] Browser crashed, relaunching...")
+                        try:
+                            browser.close()
+                        except Exception:
+                            pass
+
+                        browser, page = _launch_browser_and_auth(p, authenticator, headless, slow_mo)
+                        if not browser:
+                            logger.error("  Could not relaunch browser — aborting")
+                            results.append(("", "", variant, f"FAILED: {e}"))
+                            total_failed += 1
+                            break
+                        creator = V4CampaignCreator(page, name_prefix=name_prefix)
+
+                        # Retry this variant with fresh browser
+                        try:
+                            cid, cname = creator.create_campaign(config, variant, csv_dir)
+                            results.append((cid, cname, variant, "Created"))
+                            total_created += 1
+                            continue
+                        except Exception as retry_e:
+                            logger.error(f"  FAILED [{variant}] (retry): {retry_e}")
+                            results.append(("", "", variant, f"FAILED: {retry_e}"))
+                            total_failed += 1
+                            continue
+
+                    # Non-crash failure
                     logger.error(f"  FAILED [{variant}]: {e}")
-                    if e.orphan_id:
+                    if isinstance(e, V4CreationError) and e.orphan_id:
                         logger.error(f"  ORPHAN CAMPAIGN: {e.orphan_id}")
                     results.append(("", "", variant, f"FAILED: {e}"))
                     total_failed += 1
-                except Exception as e:
-                    logger.error(f"  FAILED [{variant}]: {e}")
-                    traceback.print_exc()
-                    results.append(("", "", variant, f"FAILED: {e}"))
-                    total_failed += 1
 
-        browser.close()
+        try:
+            browser.close()
+        except Exception:
+            pass
 
     # Summary
     logger.info("\n" + "=" * 60)

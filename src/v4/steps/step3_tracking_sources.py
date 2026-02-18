@@ -38,13 +38,11 @@ def configure_step3(page: Page, config: V4CampaignConfig):
     # ── Sources (Manual must be selected before smart bidder is visible) ─
     _select_manual_sources(page)
 
-    # Determine source inclusion strategy from source_selection field
-    ss = (config.source_selection or "").strip().upper()
-    if ss and ss != "ALL":
-        # Specific sources by name (semicolon-separated)
-        source_names = [s.strip() for s in config.source_selection.split(";") if s.strip()]
-        _include_specific_sources(page, source_names)
-    elif config.include_all_sources or ss == "ALL":
+    # Include sources — filtered by source_selection or all
+    ss = (config.source_selection or "").strip()
+    if ss and ss.upper() != "ALL":
+        _include_matching_sources(page, ss)
+    else:
         _include_all_sources(page)
 
     # Always refresh after source inclusion to get accurate suggested CPMs
@@ -133,36 +131,41 @@ def _configure_cpm_bids(page: Page, config: V4CampaignConfig):
     """Handle CPM bidding — optionally adjust max bid from suggested CPMs."""
     if config.cpm_adjust is not None:
         try:
-            # Wait for included sources table to populate after source inclusion + smart bidder
-            time.sleep(5)
+            # Wait for smart bidder to recalculate suggested CPMs
+            time.sleep(3)
 
-            # Show all entries in included sources table
+            # Show all entries in source selection table
             try:
                 page.select_option(
-                    'select[name="includedSourcesTable_length"]', '100'
+                    'select[name="sourceSelectionTable_length"]', '100'
                 )
-                time.sleep(3)
+                time.sleep(2)
             except Exception:
                 pass
 
-            highest_bid = page.evaluate('''() => {
-                let highest = 0;
-                const links = document.querySelectorAll("a[data-your-cpm]");
-                for (const a of links) {
-                    const val = parseFloat(a.getAttribute("data-your-cpm"));
-                    if (!isNaN(val) && val > highest) highest = val;
-                }
-                if (highest === 0) {
-                    document.querySelectorAll("td").forEach(td => {
-                        const m = td.textContent.trim().match(/^\\$([\\d.]+)/);
-                        if (m) {
-                            const val = parseFloat(m[1]);
-                            if (val > highest) highest = val;
+            # Poll for suggested CPMs (they load async after smart bidder is enabled)
+            highest_bid = 0
+            for attempt in range(6):
+                highest_bid = page.evaluate('''() => {
+                    let highest = 0;
+                    const rows = document.querySelectorAll("#sourceSelectionTable tbody tr");
+                    for (const row of rows) {
+                        const status = row.querySelector(".sourceStatusWrap");
+                        if (!status || status.getAttribute("data-status") !== "included") continue;
+                        const cpmCell = row.querySelector("td.minWidth100.text-right.hasSortingAndInfo.text-nowrap");
+                        if (cpmCell) {
+                            const m = cpmCell.textContent.trim().match(/^\\$([\\d.]+)/);
+                            if (m) {
+                                const val = parseFloat(m[1]);
+                                if (val > highest) highest = val;
+                            }
                         }
-                    });
-                }
-                return highest;
-            }''')
+                    }
+                    return highest;
+                }''')
+                if highest_bid and highest_bid > 0:
+                    break
+                time.sleep(3)
 
             if highest_bid and highest_bid > 0:
                 multiplier = 1 + (config.cpm_adjust / 100)
@@ -175,11 +178,18 @@ def _configure_cpm_bids(page: Page, config: V4CampaignConfig):
                 max_bid = config.max_bid
                 logger.info(f"    No suggested CPMs found, using default: ${max_bid}")
 
-            bid_input = page.locator("#maximum_bid")
-            bid_input.click()
-            time.sleep(0.2)
-            bid_input.fill(str(max_bid))
+            # Set max bid — use JS to bypass disabled state (smart_cpm disables the input)
+            page.evaluate(f'''(val) => {{
+                const el = document.querySelector("#maximum_bid");
+                if (el) {{
+                    el.removeAttribute("disabled");
+                    el.value = val;
+                    el.dispatchEvent(new Event("input", {{bubbles: true}}));
+                    el.dispatchEvent(new Event("change", {{bubbles: true}}));
+                }}
+            }}''', str(max_bid))
             time.sleep(0.3)
+            logger.info(f"    Max bid set: ${max_bid}")
         except Exception as e:
             logger.warning(f"    CPM adjustment failed: {e}")
     else:
@@ -210,27 +220,26 @@ def _select_manual_sources(page: Page):
 
 
 def _include_all_sources(page: Page):
-    """Show all source rows, check all, and click Include."""
+    """Wait for source table rows to load, check all, and click Include."""
     try:
-        # Show all rows via JS (native select may be hidden by DataTables styling)
-        page.evaluate('''() => {
-            const sel = document.querySelector('select[name="sourceSelectionTable_length"]');
-            if (sel) {
-                sel.value = "100";
-                sel.dispatchEvent(new Event("change", {bubbles: true}));
-            }
-        }''')
-        time.sleep(2)
+        # Wait for at least one source row to appear (table loads async)
+        try:
+            page.wait_for_selector(
+                '#sourceSelectionTable tbody tr td.minWidth100',
+                state="visible", timeout=15000,
+            )
+            time.sleep(1)
+        except Exception:
+            logger.warning("    Source table rows not loaded after 15s")
+            return
 
-        # Check all checkboxes
-        select_all = page.locator(
+        source_checkbox = page.locator(
             'input.checkUncheckAll[data-table="sourceSelectionTable"]'
         )
-        if select_all.count() > 0:
-            select_all.check()
-            time.sleep(0.3)
-            # Click the bulk Include button
-            page.locator('.statusActionRow > button.includeBtn').first.click()
+        if source_checkbox.is_visible(timeout=3000):
+            page.check('input.checkUncheckAll[data-table="sourceSelectionTable"]')
+            time.sleep(0.5)
+            page.click('button.includeBtn[data-btn-action="include"]')
             time.sleep(1)
             logger.info("    Sources: all included")
         else:
@@ -239,40 +248,47 @@ def _include_all_sources(page: Page):
         logger.warning(f"    Source inclusion failed: {e}")
 
 
-def _include_specific_sources(page: Page, source_names: list):
-    """Include only the named sources from the source selection table."""
-    included = 0
-    skipped = 0
-
+def _include_matching_sources(page: Page, search_term: str):
+    """Check only source rows whose site name contains the search term, then include."""
     try:
-        # Show all rows in the source selection table
+        # Wait for source table rows to load
         try:
-            page.select_option(
-                'select[name="sourceSelectionTable_length"]', '100'
+            page.wait_for_selector(
+                '#sourceSelectionTable tbody tr td.minWidth100',
+                state="visible", timeout=15000,
             )
             time.sleep(1)
         except Exception:
-            pass
+            logger.warning("    Source table rows not loaded after 15s")
+            return
 
-        for name in source_names:
-            try:
-                row = page.locator(f'tr:has(td.minWidth100:text-is("{name}"))')
-                include_btn = row.locator('button.includeBtn[data-btn-action="include"]')
-                if include_btn.is_visible(timeout=3000):
-                    include_btn.click()
-                    time.sleep(0.5)
-                    included += 1
-                    logger.info(f"    Source included: {name}")
-                else:
-                    skipped += 1
-                    logger.warning(f"    Source not found or already included: {name}")
-            except Exception as e:
-                skipped += 1
-                logger.warning(f"    Could not include source '{name}': {e}")
+        # Use JS to check only rows matching the search term
+        checked = page.evaluate('''(term) => {
+            let count = 0;
+            const rows = document.querySelectorAll("#sourceSelectionTable tbody tr");
+            for (const row of rows) {
+                const siteCell = row.querySelector("td.minWidth100");
+                if (siteCell && siteCell.textContent.toLowerCase().includes(term.toLowerCase())) {
+                    const cb = row.querySelector("input.tableCheckbox");
+                    if (cb && !cb.checked) {
+                        cb.checked = true;
+                        cb.dispatchEvent(new Event("change", {bubbles: true}));
+                        count++;
+                    }
+                }
+            }
+            return count;
+        }''', search_term)
 
-        logger.info(f"    Sources: {included} included, {skipped} skipped")
+        if checked > 0:
+            time.sleep(0.5)
+            page.click('button.includeBtn[data-btn-action="include"]')
+            time.sleep(1)
+            logger.info(f"    Sources: {checked} matching '{search_term}' included")
+        else:
+            logger.warning(f"    No sources matching '{search_term}' found")
     except Exception as e:
-        logger.warning(f"    Specific source selection failed: {e}")
+        logger.warning(f"    Source matching failed for '{search_term}': {e}")
 
 
 def _refresh_sources(page: Page):

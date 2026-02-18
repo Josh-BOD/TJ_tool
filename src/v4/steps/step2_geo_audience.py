@@ -158,14 +158,32 @@ def _add_geos(page: Page, geo_list: list):
 
 # ─── OS Targeting ─────────────────────────────────────────────────
 
-def _auto_os_for_variant(page: Page, os_names: list, config: V4CampaignConfig):
-    """Auto-derive OS targeting from variant (no explicit CSV column set)."""
+def _enable_os_section(page: Page):
+    """Enable the OS targeting section — scroll, toggle, and force-show content."""
     page.evaluate('''() => {
         const section = document.querySelector("#campaign_operatingSystemsTargeting");
-        if (section) section.scrollIntoView({block: "center"});
+        if (!section) return;
+        section.scrollIntoView({block: "center"});
     }''')
     time.sleep(0.5)
-    enable_toggle(page, "campaign_operatingSystemsTargeting")
+
+    # Click the onoffswitch label (same pattern as smart bidder toggle)
+    page.click('.onoffswitch-label[data-input="#operating_systems"]')
+    time.sleep(1.5)
+
+    # Verify the select2 is now visible
+    try:
+        page.wait_for_selector(
+            'span[id="select2-operating_systems_list_include-container"]',
+            state="visible", timeout=5000,
+        )
+        logger.info("    OS targeting: section enabled")
+    except Exception:
+        logger.warning("    OS targeting: select2 still hidden after toggle attempts")
+
+def _auto_os_for_variant(page: Page, os_names: list, config: V4CampaignConfig):
+    """Auto-derive OS targeting from variant (no explicit CSV column set)."""
+    _enable_os_section(page)
     time.sleep(1)
 
     # Remove existing OS entries (safely)
@@ -196,41 +214,8 @@ def _auto_os_for_variant(page: Page, os_names: list, config: V4CampaignConfig):
 
 def _configure_os_targeting(page: Page, config: V4CampaignConfig):
     """Configure OS targeting from explicit CSV columns."""
-    # Scroll to OS section and enable toggle
-    toggled = page.evaluate('''() => {
-        const section = document.querySelector("#campaign_operatingSystemsTargeting");
-        if (!section) return "section_not_found";
-        section.scrollIntoView({block: "center"});
-        const cb = section.querySelector("input[type='checkbox']");
-        if (!cb) return "checkbox_not_found";
-        if (!cb.checked) {
-            cb.click();
-            cb.dispatchEvent(new Event("change", {bubbles: true}));
-        }
-        return cb.checked ? "enabled" : "failed";
-    }''')
-    logger.info(f"    OS toggle: {toggled}")
-    time.sleep(1.5)
-
-    # If the section-based toggle didn't work, try clicking the checkbox directly by ID
-    if toggled != "enabled":
-        page.evaluate('''() => {
-            // Try alternative checkbox selectors
-            const candidates = [
-                document.getElementById("operating_systems"),
-                document.querySelector("input[name='operating_systems']"),
-                document.querySelector("#campaign_operatingSystemsTargeting input.toggleCheckbox"),
-                document.querySelector("label[for*='operatingSystem'] input"),
-            ];
-            for (const cb of candidates) {
-                if (cb && !cb.checked) {
-                    cb.click();
-                    cb.dispatchEvent(new Event("change", {bubbles: true}));
-                    break;
-                }
-            }
-        }''')
-        time.sleep(1.5)
+    _enable_os_section(page)
+    time.sleep(1)
 
     # Remove existing (safely — check visibility before clicking)
     try:
@@ -271,14 +256,14 @@ def _configure_os_targeting(page: Page, config: V4CampaignConfig):
 
 def _add_single_os(page: Page, os_name: str, config: V4CampaignConfig):
     """Add a single OS to the include list with optional version constraint."""
-    # Try normal click first, fallback to force click
     os_select = page.locator('span[id="select2-operating_systems_list_include-container"]')
     try:
+        os_select.wait_for(state="visible", timeout=10000)
         os_select.scroll_into_view_if_needed()
         os_select.click(timeout=5000)
     except Exception:
-        logger.info("    OS select2 not visible, trying force click...")
-        os_select.click(force=True, timeout=5000)
+        logger.warning("    OS select2 not visible after waiting")
+        raise
     time.sleep(0.5)
     page.click(f'li.select2-results__option:has-text("{os_name}")')
     time.sleep(0.3)
