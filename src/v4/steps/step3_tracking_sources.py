@@ -41,7 +41,10 @@ def configure_step3(page: Page, config: V4CampaignConfig):
     # Include sources — filtered by source_selection or all
     ss = (config.source_selection or "").strip()
     if ss and ss.upper() != "ALL":
-        _include_matching_sources(page, ss)
+        # Support multiple sources separated by semicolons (e.g. "Tube8;Redtube")
+        terms = [t.strip() for t in ss.split(";") if t.strip()]
+        for term in terms:
+            _include_matching_sources(page, term)
     else:
         _include_all_sources(page)
 
