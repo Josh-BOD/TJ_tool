@@ -41,8 +41,8 @@ def scrape_campaign(page: Page, campaign_id: str) -> dict:
     # Include the raw campaign name from page 1
     fields["_name"] = p1.get("_name", "")
 
-    # Fallback: managed campaigns only show frequency cap on the overview page
-    if not fields.get("frequency_cap"):
+    # Managed campaigns hide freq cap from edit pages — check overview instead
+    if p4.get("_managed_campaign"):
         _read_overview_frequency(page, campaign_id, fields)
 
     logger.info(f"Scraping ads for campaign {campaign_id}")
@@ -55,7 +55,7 @@ def scrape_campaign(page: Page, campaign_id: str) -> dict:
 def _read_overview_frequency(page: Page, campaign_id: str, fields: dict):
     """Check the overview page for frequency cap (managed campaigns hide it from edit pages)."""
     url = f"https://advertiser.trafficjunky.com/campaign/overview/{campaign_id}"
-    logger.info(f"Freq cap empty, checking overview page: {url}")
+    logger.info(f"Managed campaign detected, checking overview for freq cap: {url}")
     try:
         page.goto(url, wait_until="domcontentloaded", timeout=30000)
         try:
