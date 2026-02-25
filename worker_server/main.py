@@ -29,6 +29,13 @@ from worker_server.models import CreateJobRequest, JobResponse, HealthResponse, 
 
 app = FastAPI(title="Campaign Builder Worker")
 
+# Mount campaign scraper sub-app at /scraper
+try:
+    from src.campaign_scraper.server import app as scraper_app
+    app.mount("/scraper", scraper_app)
+except ImportError as e:
+    print(f"Warning: Campaign scraper not available: {e}")
+
 # In-memory job store (sufficient for 1-2 concurrent jobs per MBP)
 jobs: dict[str, dict] = {}
 job_lock = threading.Lock()
@@ -571,13 +578,18 @@ def _run_job_parallel(job_id: str, csv_path: str, csv_content: str, dry_run: boo
 
 @app.get("/health", response_model=HealthResponse)
 def health():
+    from worker_server.net_speed import get_speeds
+
     hostname = socket.gethostname()
     with job_lock:
         active = sum(1 for j in jobs.values() if j["status"] in ("pending", "running"))
+    speeds = get_speeds()
     return HealthResponse(
         hostname=hostname,
         active_jobs=active,
         available_ad_csvs=_get_ad_csvs(),
+        download_speed=speeds["download_bytes_per_sec"],
+        upload_speed=speeds["upload_bytes_per_sec"],
     )
 
 

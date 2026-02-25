@@ -26,6 +26,8 @@ class HealthResponse(BaseModel):
     hostname: str
     active_jobs: int
     available_ad_csvs: dict[str, list[str]]
+    download_speed: float = 0.0
+    upload_speed: float = 0.0
 
 
 class AdCsvListResponse(BaseModel):
