@@ -217,6 +217,7 @@ def _worker_loop(worker_id: int, is_first: bool):
             last_auth_time = time.time()  # just authenticated
             SESSION_CHECK_INTERVAL = 300  # only check is_logged_in every 5 min
             consecutive_failures = 0
+            _auth_failed = False  # set True when a job fails with auth error
 
             # Create one persistent page that lives across all jobs.
             # This avoids opening/closing browser windows per campaign.
@@ -272,13 +273,22 @@ def _worker_loop(worker_id: int, is_first: bool):
                     page = persistent_page
 
                     # Verify session if it's been a while OR if /session endpoint pushed fresh cookies
-                    needs_check = (time.time() - last_auth_time) > SESSION_CHECK_INTERVAL or session_needs_reload
+                    # _auth_failed is set when a job hits "not authenticated" — bypasses
+                    # the unreliable is_logged_in() check and goes straight to re-auth
+                    needs_check = (time.time() - last_auth_time) > SESSION_CHECK_INTERVAL or session_needs_reload or _auth_failed
                     if session_needs_reload:
                         log("Session reload forced by /session push")
                         session_needs_reload = False
-                    if needs_check:
-                        # Navigate to TJ first — is_logged_in checks the current URL,
-                        # so it would always fail on a blank page
+
+                    needs_reauth = False
+                    if _auth_failed:
+                        # A job just failed with auth error — don't trust is_logged_in(),
+                        # go straight to re-auth
+                        log("Auth failure flag set — forcing re-auth (skipping is_logged_in)")
+                        _auth_failed = False
+                        needs_reauth = True
+                    elif needs_check:
+                        # Periodic check — navigate to TJ and verify
                         try:
                             page.goto('https://advertiser.trafficjunky.com/',
                                       wait_until='domcontentloaded', timeout=15000)
@@ -290,82 +300,85 @@ def _worker_loop(worker_id: int, is_first: bool):
                             last_auth_time = time.time()
                             log("Session still valid")
                         else:
-                            is_authenticated = False
-                            log("Session expired, re-authenticating...")
+                            needs_reauth = True
 
-                            # Try 1: reload session file (may have been freshly pushed)
-                            reauth_ok = False
-                            if SESSION_FILE.exists():
-                                log("Trying session file first...")
-                                try:
-                                    old_ctx = context
-                                    new_ctx = auth_helper.load_session(browser)
-                                    if new_ctx:
-                                        # Close old page + context, switch to new
-                                        try:
-                                            persistent_page.close()
-                                        except Exception:
-                                            pass
-                                        try:
-                                            old_ctx.close()
-                                        except Exception:
-                                            pass
-                                        context = new_ctx
-                                        persistent_page = context.new_page()
-                                        page = persistent_page
-                                        page.goto('https://advertiser.trafficjunky.com/',
-                                                  wait_until='domcontentloaded', timeout=15000)
-                                        page.wait_for_timeout(2000)
-                                        if auth_helper.is_logged_in(page):
-                                            last_auth_time = time.time()
-                                            reauth_ok = True
-                                            log("Re-auth via session file successful")
-                                        else:
-                                            log("Session file loaded but not logged in")
-                                    else:
-                                        context = old_ctx  # restore if load_session returned None
-                                        log("Session file load returned None")
-                                except Exception as sess_err:
-                                    log(f"Session file re-auth error: {sess_err}")
+                    if needs_reauth:
+                        is_authenticated = False
+                        log("Session expired, re-authenticating...")
 
-                            # Try 2: manual_login as last resort (new browser)
-                            if not reauth_ok:
-                                for attempt in range(1, 5):
-                                    log(f"Re-auth manual_login attempt {attempt}/4...")
+                        # Try 1: reload session file (may have been freshly pushed)
+                        reauth_ok = False
+                        if SESSION_FILE.exists():
+                            log("Trying session file first...")
+                            try:
+                                old_ctx = context
+                                new_ctx = auth_helper.load_session(browser)
+                                if new_ctx:
+                                    # Close old page + context, switch to new
                                     try:
                                         persistent_page.close()
                                     except Exception:
                                         pass
                                     try:
-                                        context.close()
+                                        old_ctx.close()
                                     except Exception:
                                         pass
-                                    try:
-                                        browser.close()
-                                    except Exception:
-                                        pass
-                                    if attempt > 1:
-                                        time.sleep(30)
-                                    browser = pw.chromium.launch(headless=False)
-                                    context = browser.new_context()
+                                    context = new_ctx
                                     persistent_page = context.new_page()
                                     page = persistent_page
-                                    try:
-                                        success = auth_helper.manual_login(page)
-                                        if success:
-                                            auth_helper.save_session(context)
-                                            is_authenticated = True
-                                            reauth_ok = True
-                                            last_auth_time = time.time()
-                                            log("Re-auth via manual_login successful")
-                                            break
-                                        else:
-                                            log(f"Re-auth attempt {attempt} failed")
-                                    except Exception as auth_err:
-                                        log(f"Re-auth attempt {attempt} error: {auth_err}")
+                                    page.goto('https://advertiser.trafficjunky.com/',
+                                              wait_until='domcontentloaded', timeout=15000)
+                                    page.wait_for_timeout(2000)
+                                    if auth_helper.is_logged_in(page):
+                                        last_auth_time = time.time()
+                                        reauth_ok = True
+                                        log("Re-auth via session file successful")
+                                    else:
+                                        log("Session file loaded but not logged in")
+                                else:
+                                    context = old_ctx  # restore if load_session returned None
+                                    log("Session file load returned None")
+                            except Exception as sess_err:
+                                log(f"Session file re-auth error: {sess_err}")
 
-                            if not reauth_ok:
-                                raise RuntimeError("All re-auth attempts failed")
+                        # Try 2: manual_login as last resort (new browser)
+                        if not reauth_ok:
+                            for attempt in range(1, 5):
+                                log(f"Re-auth manual_login attempt {attempt}/4...")
+                                try:
+                                    persistent_page.close()
+                                except Exception:
+                                    pass
+                                try:
+                                    context.close()
+                                except Exception:
+                                    pass
+                                try:
+                                    browser.close()
+                                except Exception:
+                                    pass
+                                if attempt > 1:
+                                    time.sleep(30)
+                                browser = pw.chromium.launch(headless=False)
+                                context = browser.new_context()
+                                persistent_page = context.new_page()
+                                page = persistent_page
+                                try:
+                                    success = auth_helper.manual_login(page)
+                                    if success:
+                                        auth_helper.save_session(context)
+                                        is_authenticated = True
+                                        reauth_ok = True
+                                        last_auth_time = time.time()
+                                        log("Re-auth via manual_login successful")
+                                        break
+                                    else:
+                                        log(f"Re-auth attempt {attempt} failed")
+                                except Exception as auth_err:
+                                    log(f"Re-auth attempt {attempt} error: {auth_err}")
+
+                        if not reauth_ok:
+                            raise RuntimeError("All re-auth attempts failed")
 
                     log(f"Starting {job_type} for campaign {campaign_id}")
 
@@ -468,11 +481,13 @@ def _worker_loop(worker_id: int, is_first: bool):
 
                     consecutive_failures += 1
 
-                    # Auth failure: force a session check on the very next job
-                    # instead of waiting for SESSION_CHECK_INTERVAL to expire
+                    # Auth failure: bypass is_logged_in() and go straight to re-auth
+                    # on the next job. is_logged_in() is unreliable (TJ SPA loads shell
+                    # even with expired session), so we can't trust it after a known failure.
                     if "not authenticated" in error_msg.lower() or "login page" in error_msg.lower():
-                        last_auth_time = 0  # forces needs_check = True on next iteration
-                        log("Auth failure detected, forcing session check on next job")
+                        _auth_failed = True
+                        is_authenticated = False
+                        log("Auth failure detected, will force re-auth on next job")
 
                     if consecutive_failures >= 5:
                         global pool_disabled, pool_disabled_reason
