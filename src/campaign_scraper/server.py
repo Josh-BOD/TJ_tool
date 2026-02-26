@@ -666,6 +666,90 @@ _watchdog_thread = threading.Thread(target=_pool_watchdog, daemon=True, name="po
 _watchdog_thread.start()
 
 
+# ── Session keep-alive ───────────────────────────────────────────
+SESSION_KEEPALIVE_INTERVAL = 600  # 10 minutes
+
+
+def _session_keepalive():
+    """
+    Periodically load the saved session, navigate to TJ advertiser,
+    and re-save. This refreshes the Laravel session cookie server-side
+    so it doesn't expire while workers are idle.
+    """
+    global is_authenticated
+
+    # Wait 60s before first run (let workers start up first)
+    time.sleep(60)
+
+    while True:
+        try:
+            if not SESSION_FILE.exists():
+                time.sleep(SESSION_KEEPALIVE_INTERVAL)
+                continue
+
+            if not is_authenticated:
+                # No point pinging TJ with an expired session
+                time.sleep(SESSION_KEEPALIVE_INTERVAL)
+                continue
+
+            # Skip if workers are actively running jobs (they handle their own session)
+            if _active_job_count() > 0:
+                time.sleep(SESSION_KEEPALIVE_INTERVAL)
+                continue
+
+            logger.info("[KEEPALIVE] Refreshing TJ session...")
+
+            from playwright.sync_api import sync_playwright
+            from auth import TJAuthenticator
+
+            auth_helper = TJAuthenticator(TJ_USERNAME, TJ_PASSWORD)
+
+            with sync_playwright() as pw:
+                browser = pw.chromium.launch(headless=True)
+                context = auth_helper.load_session(browser)
+
+                if not context:
+                    logger.warning("[KEEPALIVE] Failed to load session file")
+                    browser.close()
+                    time.sleep(SESSION_KEEPALIVE_INTERVAL)
+                    continue
+
+                page = context.new_page()
+                try:
+                    page.goto(
+                        "https://advertiser.trafficjunky.com/",
+                        wait_until="domcontentloaded",
+                        timeout=20000,
+                    )
+                    page.wait_for_timeout(2000)
+
+                    if auth_helper.is_logged_in(page):
+                        # Save refreshed session (server extended cookie expiry)
+                        auth_helper.save_session(context)
+                        logger.info("[KEEPALIVE] Session refreshed and saved")
+                    else:
+                        logger.warning("[KEEPALIVE] Session expired during keepalive, marking unauthenticated")
+                        is_authenticated = False
+                except Exception as nav_err:
+                    logger.warning(f"[KEEPALIVE] Navigation failed: {nav_err}")
+                finally:
+                    try:
+                        page.close()
+                        context.close()
+                        browser.close()
+                    except Exception:
+                        pass
+
+        except Exception as e:
+            logger.warning(f"[KEEPALIVE] Error: {e}")
+
+        time.sleep(SESSION_KEEPALIVE_INTERVAL)
+
+
+_keepalive_thread = threading.Thread(target=_session_keepalive, daemon=True, name="session-keepalive")
+_keepalive_thread.start()
+
+
 # ── Endpoints ─────────────────────────────────────────────────────
 @app.get("/health", response_model=HealthResponse)
 async def health():
