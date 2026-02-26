@@ -36,13 +36,14 @@ def scrape_campaign(page: Page, campaign_id: str) -> dict:
     overview = read_overview(page, campaign_id)
 
     # ── Step 2: Decide whether to skip Page 1 ─────────────────────
-    all_present = all(overview.get(f) for f in PAGE1_REQUIRED)
+    # Check key presence (not truthiness) — empty string means the field was seen but blank
+    all_present = all(f in overview for f in PAGE1_REQUIRED)
 
     if all_present:
         logger.info(f"Overview has all Page 1 fields — skipping page 1")
         p1 = overview
     else:
-        missing = [f for f in PAGE1_REQUIRED if not overview.get(f)]
+        missing = [f for f in PAGE1_REQUIRED if f not in overview]
         logger.info(f"Overview missing {missing} — reading page 1")
         p1 = read_page1(page, campaign_id)
 
