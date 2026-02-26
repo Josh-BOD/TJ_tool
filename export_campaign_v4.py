@@ -270,6 +270,9 @@ def read_overview(page: Page, campaign_id: str) -> dict:
 
     d: dict = {}
 
+    # Log all raw label/value pairs to identify unmapped fields
+    logger.info(f"  Overview raw pairs: {[(l, v[:60]) for l, v in raw_pairs]}")
+
     for label_text, value in raw_pairs:
         label_lower = label_text.lower().strip().rstrip(":")
         field_name = OVERVIEW_LABEL_MAP.get(label_lower)
