@@ -64,13 +64,12 @@ def scrape_campaign(page: Page, campaign_id: str) -> dict:
     # Include the raw campaign name
     fields["_name"] = p1.get("_name", "")
 
-    # ── Step 5: Managed campaign freq cap from overview ────────────
-    if p4.get("_managed_campaign") and overview.get("frequency_cap"):
+    # ── Step 5: Freq cap from overview when p4 didn't capture it ────
+    # Managed campaigns hide freq cap from edit pages, but overview always has it
+    if not fields.get("frequency_cap") and overview.get("frequency_cap"):
         fields["frequency_cap"] = overview["frequency_cap"]
         fields["frequency_cap_every"] = overview.get("frequency_cap_every", "24")
         logger.info(f"  Freq cap (from overview): {fields['frequency_cap']} times / {fields['frequency_cap_every']}h")
-    elif p4.get("_managed_campaign"):
-        _read_overview_frequency(page, campaign_id, fields)
 
     # ── Step 6: Read ads ──────────────────────────────────────────
     logger.info(f"Collecting ads for campaign {campaign_id}")
