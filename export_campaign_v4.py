@@ -262,6 +262,19 @@ def read_overview(page: Page, campaign_id: str) -> dict:
                     const labelPart = label.textContent.trim();
                     value = full.replace(labelPart, '').trim();
                 }
+                // Device field uses icons instead of text — detect from <i> classes
+                if (/^device$/i.test(labelText.trim()) && !value) {
+                    const icons = row.querySelectorAll('i[class*="fa-"]');
+                    const classes = Array.from(icons).map(i => i.className).join(' ');
+                    if (/fa-mobile/i.test(classes) && /fa-desktop/i.test(classes))
+                        value = 'All Devices';
+                    else if (/fa-mobile/i.test(classes))
+                        value = 'Mobile';
+                    else if (/fa-desktop/i.test(classes) || /fa-laptop/i.test(classes))
+                        value = 'Desktop';
+                    else if (icons.length > 0)
+                        value = 'All Devices';
+                }
                 pairs.push([labelText, value]);
             }
         }
