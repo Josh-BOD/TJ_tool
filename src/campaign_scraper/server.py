@@ -735,7 +735,13 @@ def _session_keepalive():
                 finally:
                     try:
                         page.close()
+                    except Exception:
+                        pass
+                    try:
                         context.close()
+                    except Exception:
+                        pass
+                    try:
                         browser.close()
                     except Exception:
                         pass
@@ -1034,7 +1040,13 @@ def _relogin_thread():
 
             try:
                 page.close()
+            except Exception:
+                pass
+            try:
                 context.close()
+            except Exception:
+                pass
+            try:
                 browser.close()
             except Exception:
                 pass
