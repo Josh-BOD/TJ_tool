@@ -73,6 +73,7 @@ app.add_middleware(
 jobs: dict[str, dict] = {}
 job_lock = threading.Lock()
 is_authenticated = False
+session_needs_reload = False  # Set by /session endpoint, forces workers to re-auth on next job
 
 # ── Job queue + worker pool ───────────────────────────────────────
 # PriorityQueue: items are (priority, sequence, job_dict) tuples
@@ -106,7 +107,7 @@ def _worker_loop(worker_id: int, is_first: bool):
         is_first: If True, does manual login and saves session.
                   If False, waits for session file then loads it.
     """
-    global is_authenticated, active_workers, workers_launched
+    global is_authenticated, active_workers, workers_launched, session_needs_reload
     from playwright.sync_api import sync_playwright
     from auth import TJAuthenticator
 
@@ -270,8 +271,11 @@ def _worker_loop(worker_id: int, is_first: bool):
 
                     page = persistent_page
 
-                    # Only verify session if it's been a while since last auth
-                    needs_check = (time.time() - last_auth_time) > SESSION_CHECK_INTERVAL
+                    # Verify session if it's been a while OR if /session endpoint pushed fresh cookies
+                    needs_check = (time.time() - last_auth_time) > SESSION_CHECK_INTERVAL or session_needs_reload
+                    if session_needs_reload:
+                        log("Session reload forced by /session push")
+                        session_needs_reload = False
                     if needs_check:
                         # Navigate to TJ first — is_logged_in checks the current URL,
                         # so it would always fail on a blank page
@@ -385,6 +389,26 @@ def _worker_loop(worker_id: int, is_first: bool):
                             job_type="scrape",
                             result=result.get("fields"),
                             ads=result.get("ads"),
+                        ))
+
+                    elif job_type == "scrape-cpm":
+                        from src.campaign_scraper.cpm_reader import scrape_cpm_placements
+                        result = scrape_cpm_placements(page, campaign_id)
+
+                        with job_lock:
+                            if job_id in jobs:
+                                jobs[job_id]["status"] = "completed"
+                                jobs[job_id]["result"] = result
+                                jobs[job_id]["completed_at"] = time.time()
+
+                        log(f"CPM collect completed: {result.get('source_count', 0)} placements")
+
+                        _send_webhook(webhook_url, WebhookPayload(
+                            job_id=job_id,
+                            campaign_id=campaign_id,
+                            status="completed",
+                            job_type="scrape-cpm",
+                            result=result,
                         ))
 
                     elif job_type == "update":
@@ -695,6 +719,46 @@ async def scrape(req: ScrapeRequest):
     )
 
 
+@app.post("/scrape-cpm", response_model=JobStatusResponse, dependencies=[Depends(verify_bearer)])
+async def scrape_cpm(req: ScrapeRequest):
+    if pool_disabled:
+        raise HTTPException(status_code=503, detail=f"Pool disabled: {pool_disabled_reason}. Push a fresh session or call /reset first.")
+
+    job_id = str(uuid.uuid4())
+    webhook_url = req.webhook_url
+
+    with job_lock:
+        jobs[job_id] = {
+            "status": "pending",
+            "job_type": "scrape-cpm",
+            "campaign_id": req.campaign_id,
+            "result": None,
+            "ads": None,
+            "error": None,
+            "log_lines": deque(maxlen=200),
+            "created_at": time.time(),
+            "completed_at": None,
+        }
+
+    # Enqueue job and ensure pool is running
+    global _job_seq
+    _scale_pool()
+    _job_seq += 1
+    job_queue.put((req.priority, _job_seq, {
+        "job_id": job_id,
+        "job_type": "scrape-cpm",
+        "campaign_id": req.campaign_id,
+        "webhook_url": webhook_url,
+    }))
+
+    return JobStatusResponse(
+        job_id=job_id,
+        status="pending",
+        job_type="scrape-cpm",
+        campaign_id=req.campaign_id,
+    )
+
+
 @app.post("/update", response_model=JobStatusResponse, dependencies=[Depends(verify_bearer)])
 async def update(req: UpdateRequest):
     if pool_disabled:
@@ -793,9 +857,10 @@ async def inject_session(request: Request):
 
         logger.info(f"Session injected: {len(cookies)} cookies written to {SESSION_FILE}")
 
-        # Mark as authenticated so existing workers can reload session
-        global is_authenticated, pool_disabled, pool_disabled_reason
+        # Mark as authenticated and force workers to reload session on next job
+        global is_authenticated, pool_disabled, pool_disabled_reason, session_needs_reload
         is_authenticated = True
+        session_needs_reload = True
 
         # Clear pool_disabled — fresh session means we should try again
         if pool_disabled:
@@ -840,6 +905,87 @@ async def clear_queue():
                 cancelled_count += 1
 
     return {"success": True, "cancelled": cancelled_count, "drained_from_queue": drained}
+
+
+# ── Relogin state ────────────────────────────────────────────────
+_relogin_lock = threading.Lock()
+_relogin_status: dict = {"state": "idle"}  # idle | running | success | failed
+
+
+def _relogin_thread():
+    """Background thread: launch a fresh browser, manual_login(), save session."""
+    global is_authenticated, pool_disabled, pool_disabled_reason, session_needs_reload, _relogin_status
+
+    try:
+        from playwright.sync_api import sync_playwright
+        from auth import TJAuthenticator
+
+        auth_helper = TJAuthenticator(TJ_USERNAME, TJ_PASSWORD)
+
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(headless=False)
+            context = browser.new_context()
+            page = context.new_page()
+
+            logger.info("[RELOGIN] Starting manual_login()...")
+            success = auth_helper.manual_login(page)
+
+            if success:
+                auth_helper.save_session(context)
+                is_authenticated = True
+                session_needs_reload = True
+
+                if pool_disabled:
+                    logger.info("[RELOGIN] Clearing pool_disabled state")
+                    pool_disabled = False
+                    pool_disabled_reason = ""
+
+                with _relogin_lock:
+                    _relogin_status = {"state": "success", "message": "Relogin successful, session saved"}
+                logger.info("[RELOGIN] manual_login() succeeded, session saved")
+            else:
+                with _relogin_lock:
+                    _relogin_status = {"state": "failed", "error": "manual_login() returned False"}
+                logger.warning("[RELOGIN] manual_login() returned False")
+
+            try:
+                page.close()
+                context.close()
+                browser.close()
+            except Exception:
+                pass
+
+    except Exception as e:
+        logger.exception(f"[RELOGIN] Failed: {e}")
+        with _relogin_lock:
+            _relogin_status = {"state": "failed", "error": str(e)}
+
+
+@app.post("/relogin", dependencies=[Depends(verify_bearer)])
+async def relogin():
+    """
+    Trigger a fresh manual_login() in a background thread.
+    Returns immediately. Poll /relogin-status for result.
+    """
+    global _relogin_status
+
+    with _relogin_lock:
+        if _relogin_status.get("state") == "running":
+            return {"status": "already_running", "message": "Relogin already in progress"}
+
+        _relogin_status = {"state": "running"}
+
+    t = threading.Thread(target=_relogin_thread, daemon=True, name="relogin-worker")
+    t.start()
+
+    return {"status": "relogin_started", "message": "Relogin initiated in background (~20-30s)"}
+
+
+@app.get("/relogin-status", dependencies=[Depends(verify_bearer)])
+async def relogin_status():
+    """Check the result of the last /relogin call."""
+    with _relogin_lock:
+        return _relogin_status.copy()
 
 
 @app.post("/reset", dependencies=[Depends(verify_bearer)])
