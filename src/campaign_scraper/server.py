@@ -467,6 +467,13 @@ def _worker_loop(worker_id: int, is_first: bool):
                     ))
 
                     consecutive_failures += 1
+
+                    # Auth failure: force a session check on the very next job
+                    # instead of waiting for SESSION_CHECK_INTERVAL to expire
+                    if "not authenticated" in error_msg.lower() or "login page" in error_msg.lower():
+                        last_auth_time = 0  # forces needs_check = True on next iteration
+                        log("Auth failure detected, forcing session check on next job")
+
                     if consecutive_failures >= 5:
                         global pool_disabled, pool_disabled_reason
                         pool_disabled = True
@@ -689,11 +696,6 @@ def _session_keepalive():
 
             if not is_authenticated:
                 # No point pinging TJ with an expired session
-                time.sleep(SESSION_KEEPALIVE_INTERVAL)
-                continue
-
-            # Skip if workers are actively running jobs (they handle their own session)
-            if _active_job_count() > 0:
                 time.sleep(SESSION_KEEPALIVE_INTERVAL)
                 continue
 
