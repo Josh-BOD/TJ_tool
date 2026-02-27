@@ -86,6 +86,7 @@ active_workers = 0    # how many are currently alive
 worker_threads: dict[int, threading.Thread] = {}  # worker_id -> thread
 pool_disabled = False  # Set True after too many failures; prevents watchdog/scale_pool from restarting
 pool_disabled_reason = ""  # Human-readable reason for disabling
+_manual_login_lock = threading.Lock()  # Only one worker does manual_login at a time
 
 
 # ── Auth dependency ───────────────────────────────────────────────
@@ -124,12 +125,52 @@ def _worker_loop(worker_id: int, is_first: bool):
             context = None
             reuse_page = None  # page to reuse from login (worker 1 first job)
 
+            def _try_session_file() -> bool:
+                """Try loading session file and verify it works. Returns True on success."""
+                nonlocal browser, context, reuse_page
+                global is_authenticated
+
+                if not SESSION_FILE.exists():
+                    return False
+
+                logger.info(f"{prefix} Session file found, loading and verifying...")
+                context = auth_helper.load_session(browser)
+                if not context:
+                    logger.warning(f"{prefix} load_session returned None")
+                    return False
+
+                verify_page = context.new_page()
+                try:
+                    verify_page.goto('https://advertiser.trafficjunky.com/',
+                                     wait_until='domcontentloaded', timeout=15000)
+                    verify_page.wait_for_timeout(2000)
+                    if auth_helper.is_logged_in(verify_page):
+                        is_authenticated = True
+                        logger.info(f"{prefix} Session loaded and verified")
+                        reuse_page = verify_page
+                        return True
+                    else:
+                        logger.warning(f"{prefix} Session file loaded but expired")
+                except Exception as e:
+                    logger.warning(f"{prefix} Session verification failed: {e}")
+
+                try:
+                    verify_page.close()
+                except Exception:
+                    pass
+                try:
+                    context.close()
+                except Exception:
+                    pass
+                context = None
+                return False
+
             def _launch_and_auth() -> bool:
                 """Launch browser + authenticate. Returns True on success.
 
                 Priority order:
-                1. Load session file (written by /session endpoint or previous login)
-                2. manual_login as fallback (worker 1 only, or any worker if no session)
+                1. Load session file and VERIFY it works (fast)
+                2. manual_login as fallback — serialized so only one worker at a time
                 """
                 nonlocal browser, context, reuse_page
                 global is_authenticated
@@ -144,30 +185,36 @@ def _worker_loop(worker_id: int, is_first: bool):
 
                 browser = pw.chromium.launch(headless=False)
 
-                # Always try session file first (may have been pushed via /session API)
-                if SESSION_FILE.exists():
-                    logger.info(f"{prefix} Session file found, trying to load...")
-                    context = auth_helper.load_session(browser)
-                    if context:
-                        is_authenticated = True
-                        logger.info(f"{prefix} Session loaded successfully")
+                # Try session file first (fast path)
+                if _try_session_file():
+                    return True
+
+                # Need manual_login — only one worker at a time
+                logger.info(f"{prefix} Waiting for manual_login lock...")
+                with _manual_login_lock:
+                    # Re-check session: another worker may have just logged in while we waited
+                    if _try_session_file():
+                        logger.info(f"{prefix} Another worker already logged in, using session")
                         return True
-                    else:
-                        logger.warning(f"{prefix} Session file exists but load_session failed")
 
-                # No valid session — fall back to manual_login
-                logger.info(f"{prefix} No valid session, trying manual login...")
-                context = browser.new_context()
-                page = context.new_page()
-                success = auth_helper.manual_login(page)
-                if not success:
-                    return False
+                    # We're the one that does manual_login
+                    logger.info(f"{prefix} Acquired lock, doing manual_login...")
+                    if context:
+                        try:
+                            context.close()
+                        except Exception:
+                            pass
+                    context = browser.new_context()
+                    page = context.new_page()
+                    success = auth_helper.manual_login(page)
+                    if not success:
+                        return False
 
-                auth_helper.save_session(context)
-                is_authenticated = True
-                logger.info(f"{prefix} Login successful, session saved")
-                reuse_page = page
-                return True
+                    auth_helper.save_session(context)
+                    is_authenticated = True
+                    logger.info(f"{prefix} Login successful, session saved")
+                    reuse_page = page
+                    return True
 
             # ── Initial auth with retry (4 attempts, 30s between) ─
             if not is_first:
@@ -341,41 +388,76 @@ def _worker_loop(worker_id: int, is_first: bool):
                             except Exception as sess_err:
                                 log(f"Session file re-auth error: {sess_err}")
 
-                        # Try 2: manual_login as last resort (new browser)
+                        # Try 2: manual_login as last resort — serialized (one worker at a time)
                         if not reauth_ok:
-                            for attempt in range(1, 5):
-                                log(f"Re-auth manual_login attempt {attempt}/4...")
-                                try:
-                                    persistent_page.close()
-                                except Exception:
-                                    pass
-                                try:
-                                    context.close()
-                                except Exception:
-                                    pass
-                                try:
-                                    browser.close()
-                                except Exception:
-                                    pass
-                                if attempt > 1:
-                                    time.sleep(30)
-                                browser = pw.chromium.launch(headless=False)
-                                context = browser.new_context()
-                                persistent_page = context.new_page()
-                                page = persistent_page
-                                try:
-                                    success = auth_helper.manual_login(page)
-                                    if success:
-                                        auth_helper.save_session(context)
-                                        is_authenticated = True
-                                        reauth_ok = True
-                                        last_auth_time = time.time()
-                                        log("Re-auth via manual_login successful")
-                                        break
-                                    else:
-                                        log(f"Re-auth attempt {attempt} failed")
-                                except Exception as auth_err:
-                                    log(f"Re-auth attempt {attempt} error: {auth_err}")
+                            log("Waiting for manual_login lock...")
+                            with _manual_login_lock:
+                                # Re-check session: another worker may have logged in while we waited
+                                if SESSION_FILE.exists():
+                                    log("Re-checking session file after lock acquired...")
+                                    try:
+                                        old_ctx = context
+                                        new_ctx = auth_helper.load_session(browser)
+                                        if new_ctx:
+                                            try:
+                                                persistent_page.close()
+                                            except Exception:
+                                                pass
+                                            try:
+                                                old_ctx.close()
+                                            except Exception:
+                                                pass
+                                            context = new_ctx
+                                            persistent_page = context.new_page()
+                                            page = persistent_page
+                                            page.goto('https://advertiser.trafficjunky.com/',
+                                                      wait_until='domcontentloaded', timeout=15000)
+                                            page.wait_for_timeout(2000)
+                                            if auth_helper.is_logged_in(page):
+                                                last_auth_time = time.time()
+                                                is_authenticated = True
+                                                reauth_ok = True
+                                                log("Re-auth via session file (after lock wait) successful")
+                                        else:
+                                            context = old_ctx
+                                    except Exception as sess_err:
+                                        log(f"Session re-check error: {sess_err}")
+
+                                # Still no luck — we do the manual_login
+                                if not reauth_ok:
+                                    for attempt in range(1, 5):
+                                        log(f"Re-auth manual_login attempt {attempt}/4...")
+                                        try:
+                                            persistent_page.close()
+                                        except Exception:
+                                            pass
+                                        try:
+                                            context.close()
+                                        except Exception:
+                                            pass
+                                        try:
+                                            browser.close()
+                                        except Exception:
+                                            pass
+                                        if attempt > 1:
+                                            time.sleep(30)
+                                        browser = pw.chromium.launch(headless=False)
+                                        context = browser.new_context()
+                                        persistent_page = context.new_page()
+                                        page = persistent_page
+                                        try:
+                                            success = auth_helper.manual_login(page)
+                                            if success:
+                                                auth_helper.save_session(context)
+                                                is_authenticated = True
+                                                reauth_ok = True
+                                                last_auth_time = time.time()
+                                                log("Re-auth via manual_login successful")
+                                                break
+                                            else:
+                                                log(f"Re-auth attempt {attempt} failed")
+                                        except Exception as auth_err:
+                                            log(f"Re-auth attempt {attempt} error: {auth_err}")
 
                         if not reauth_ok:
                             raise RuntimeError("All re-auth attempts failed")
