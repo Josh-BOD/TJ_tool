@@ -1024,8 +1024,15 @@ _relogin_status: dict = {"state": "idle"}  # idle | running | success | failed
 
 
 def _relogin_thread():
-    """Background thread: launch a fresh browser, manual_login(), save session."""
+    """Background thread: try session file first (fast, headless), then manual_login() as fallback."""
     global is_authenticated, pool_disabled, pool_disabled_reason, session_needs_reload, _relogin_status
+
+    def _clear_pool_disabled():
+        global pool_disabled, pool_disabled_reason
+        if pool_disabled:
+            logger.info("[RELOGIN] Clearing pool_disabled state")
+            pool_disabled = False
+            pool_disabled_reason = ""
 
     try:
         from playwright.sync_api import sync_playwright
@@ -1034,25 +1041,65 @@ def _relogin_thread():
         auth_helper = TJAuthenticator(TJ_USERNAME, TJ_PASSWORD)
 
         with sync_playwright() as pw:
+            # ── Step 1: Try session file first (headless, ~3s) ──
+            # The backend may have just pushed fresh Chrome cookies via /session
+            if SESSION_FILE.exists():
+                logger.info("[RELOGIN] Session file found, validating with headless browser...")
+                browser = pw.chromium.launch(headless=True)
+                try:
+                    context = auth_helper.load_session(browser)
+                    if context:
+                        page = context.new_page()
+                        try:
+                            page.goto("https://advertiser.trafficjunky.com/",
+                                      wait_until="domcontentloaded", timeout=20000)
+                            page.wait_for_timeout(2000)
+
+                            if auth_helper.is_logged_in(page):
+                                auth_helper.save_session(context)
+                                is_authenticated = True
+                                session_needs_reload = True
+                                _clear_pool_disabled()
+
+                                with _relogin_lock:
+                                    _relogin_status = {"state": "success", "message": "Session file valid — no login needed"}
+                                logger.info("[RELOGIN] Session file validated, skipping manual_login")
+                                return  # done — no reCAPTCHA needed
+                            else:
+                                logger.info("[RELOGIN] Session file expired, falling back to manual_login")
+                        finally:
+                            try:
+                                page.close()
+                            except Exception:
+                                pass
+                            try:
+                                context.close()
+                            except Exception:
+                                pass
+                    else:
+                        logger.info("[RELOGIN] load_session returned None")
+                finally:
+                    try:
+                        browser.close()
+                    except Exception:
+                        pass
+
+            # ── Step 2: Fall back to manual_login (headed, reCAPTCHA ~20-30s) ──
+            logger.info("[RELOGIN] Starting manual_login()...")
             browser = pw.chromium.launch(headless=False)
             context = browser.new_context()
             page = context.new_page()
 
-            logger.info("[RELOGIN] Starting manual_login()...")
             success = auth_helper.manual_login(page)
 
             if success:
                 auth_helper.save_session(context)
                 is_authenticated = True
                 session_needs_reload = True
-
-                if pool_disabled:
-                    logger.info("[RELOGIN] Clearing pool_disabled state")
-                    pool_disabled = False
-                    pool_disabled_reason = ""
+                _clear_pool_disabled()
 
                 with _relogin_lock:
-                    _relogin_status = {"state": "success", "message": "Relogin successful, session saved"}
+                    _relogin_status = {"state": "success", "message": "Relogin successful via manual_login"}
                 logger.info("[RELOGIN] manual_login() succeeded, session saved")
             else:
                 with _relogin_lock:
