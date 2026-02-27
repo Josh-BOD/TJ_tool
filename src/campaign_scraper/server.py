@@ -689,7 +689,7 @@ _watchdog_thread.start()
 
 
 # ── Session keep-alive ───────────────────────────────────────────
-SESSION_KEEPALIVE_INTERVAL = 600  # 10 minutes
+SESSION_KEEPALIVE_INTERVAL = 300  # 5 minutes
 
 
 def _session_keepalive():
@@ -743,7 +743,10 @@ def _session_keepalive():
                     if auth_helper.is_logged_in(page):
                         # Save refreshed session (server extended cookie expiry)
                         auth_helper.save_session(context)
-                        logger.info("[KEEPALIVE] Session refreshed and saved")
+                        # Tell running workers to reload from file on next job
+                        session_needs_reload = True
+                        is_authenticated = True
+                        logger.info("[KEEPALIVE] Session refreshed, saved, and flagged for worker reload")
                     else:
                         logger.warning("[KEEPALIVE] Session expired during keepalive, marking unauthenticated")
                         is_authenticated = False
