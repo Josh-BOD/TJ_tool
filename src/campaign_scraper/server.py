@@ -459,6 +459,7 @@ def _worker_loop(worker_id: int, is_first: bool):
                         ))
 
                     consecutive_failures = 0
+                    is_authenticated = True  # job succeeded, session is definitely valid
 
                 except Exception as e:
                     error_msg = str(e)
