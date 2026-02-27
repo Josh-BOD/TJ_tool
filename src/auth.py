@@ -148,39 +148,95 @@ class TJAuthenticator:
     
     def is_logged_in(self, page: Page) -> bool:
         """
-        Check if still logged in.
-        
+        Check if still logged in by verifying we can reach the dashboard.
+
+        The TJ SPA shell loads on advertiser.trafficjunky.com regardless of
+        auth state, so URL-only checks give false positives. Instead we wait
+        for the page to settle and check for login-page indicators (the "We
+        missed you" heading, a login form, or a redirect to sign-in/login).
+
         Args:
-            page: Playwright page object
-            
+            page: Playwright page object (should already be navigated to TJ)
+
         Returns:
             True if logged in, False otherwise
         """
         try:
-            current_url = page.url
-            
-            # If we're on advertiser subdomain and not on sign-in page, we're likely logged in
-            if 'advertiser.trafficjunky.com' in current_url and 'sign-in' not in current_url:
-                logger.debug(f"Logged in - on advertiser page: {current_url}")
-                return True
-            
-            # If URL contains campaigns or dashboard, we're logged in
-            if any(keyword in current_url for keyword in ['campaigns', 'dashboard', 'campaign/overview']):
-                logger.debug(f"Logged in - URL check: {current_url}")
-                return True
-            
-            # Check for common logged-in elements
+            # Wait for the SPA to finish its auth check and potentially redirect
             try:
-                if (page.locator('[href*="/campaigns"]').is_visible(timeout=2000) or
-                    page.locator('a:has-text("Campaigns")').is_visible(timeout=2000)):
-                    logger.debug("Logged in - found campaigns link")
-                    return True
-            except:
+                page.wait_for_load_state("networkidle", timeout=10000)
+            except Exception:
                 pass
-            
+            page.wait_for_timeout(2000)
+
+            current_url = page.url
+
+            # Definite NOT logged in: redirected to sign-in or login page
+            if 'sign-in' in current_url or '/login' in current_url:
+                logger.info(f"Not logged in - redirected to: {current_url}")
+                return False
+
+            # Check for login page indicators in the DOM (same check cpm_reader uses)
+            is_login_page = page.evaluate('''() => {
+                const h1 = document.querySelector("h1");
+                if (h1 && h1.textContent.includes("We missed you")) return true;
+                const loginForm = document.querySelector("form[action*='login'], input[name='password']");
+                if (loginForm) return true;
+                return false;
+            }''')
+            if is_login_page:
+                logger.info("Not logged in - login page detected in DOM")
+                return False
+
+            # Positive check: look for authenticated dashboard content
+            has_dashboard = page.evaluate('''() => {
+                // Sidebar nav with campaign links = definitely logged in
+                const campaignLink = document.querySelector('a[href*="/campaigns"], a[href*="/campaign"]');
+                if (campaignLink) return true;
+                // Account/user menu element
+                const accountMenu = document.querySelector('[class*="account"], [class*="user-menu"], [class*="avatar"]');
+                if (accountMenu) return true;
+                // Any TJ dashboard-specific nav
+                const nav = document.querySelector('nav, [role="navigation"]');
+                if (nav && nav.querySelectorAll('a').length > 3) return true;
+                return false;
+            }''')
+
+            if has_dashboard:
+                logger.debug(f"Logged in - dashboard content found at {current_url}")
+                return True
+
+            # If on advertiser domain with no login indicators and no dashboard yet,
+            # wait a bit more for the SPA to settle, then re-check
+            if 'advertiser.trafficjunky.com' in current_url:
+                page.wait_for_timeout(3000)
+
+                # Re-check for redirect after extra wait
+                current_url = page.url
+                if 'sign-in' in current_url or '/login' in current_url:
+                    logger.info(f"Not logged in - late redirect to: {current_url}")
+                    return False
+
+                # Re-check DOM
+                is_login_page = page.evaluate('''() => {
+                    const h1 = document.querySelector("h1");
+                    if (h1 && h1.textContent.includes("We missed you")) return true;
+                    const loginForm = document.querySelector("form[action*='login'], input[name='password']");
+                    if (loginForm) return true;
+                    return false;
+                }''')
+                if is_login_page:
+                    logger.info("Not logged in - login page detected after extra wait")
+                    return False
+
+                # Still on advertiser domain with no login page = likely logged in
+                logger.debug(f"Logged in - on advertiser domain, no login indicators: {current_url}")
+                return True
+
+            logger.info(f"Not logged in - unexpected URL: {current_url}")
             return False
         except Exception as e:
-            logger.debug(f"Login check error: {e}")
+            logger.warning(f"Login check error: {e}")
             return False
     
     def save_session(self, context: BrowserContext) -> bool:

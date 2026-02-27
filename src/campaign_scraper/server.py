@@ -1031,8 +1031,8 @@ async def cancel_job(job_id: str):
 async def inject_session(request: Request):
     """
     Accept a Playwright storageState (cookies + origins) and write
-    it to the session file. Restarts the browser pool so workers
-    pick up the fresh session on their next auth cycle.
+    it to the session file. Validates the session with a headless browser
+    before reporting authenticated. Workers reload on next job.
     """
     import json
 
@@ -1050,9 +1050,7 @@ async def inject_session(request: Request):
 
         logger.info(f"Session injected: {len(cookies)} cookies written to {SESSION_FILE}")
 
-        # Mark as authenticated and force workers to reload session on next job
         global is_authenticated, pool_disabled, pool_disabled_reason, session_needs_reload
-        is_authenticated = True
         session_needs_reload = True
 
         # Clear pool_disabled — fresh session means we should try again
@@ -1061,9 +1059,48 @@ async def inject_session(request: Request):
             pool_disabled = False
             pool_disabled_reason = ""
 
+        # Validate the session before reporting authenticated
+        validated = False
+        try:
+            from playwright.sync_api import sync_playwright
+            from auth import TJAuthenticator
+
+            auth_helper = TJAuthenticator(TJ_USERNAME, TJ_PASSWORD)
+            with sync_playwright() as pw:
+                browser = pw.chromium.launch(headless=True)
+                try:
+                    context = auth_helper.load_session(browser)
+                    if context:
+                        page = context.new_page()
+                        try:
+                            page.goto("https://advertiser.trafficjunky.com/",
+                                      wait_until="domcontentloaded", timeout=20000)
+                            validated = auth_helper.is_logged_in(page)
+                        finally:
+                            try:
+                                page.close()
+                            except Exception:
+                                pass
+                            try:
+                                context.close()
+                            except Exception:
+                                pass
+                finally:
+                    try:
+                        browser.close()
+                    except Exception:
+                        pass
+        except Exception as e:
+            logger.warning(f"Session validation failed: {e}")
+
+        is_authenticated = validated
+        status_msg = "validated" if validated else "written but NOT validated (session may be expired)"
+        logger.info(f"Session injection result: {status_msg}")
+
         return {
             "success": True,
-            "message": f"Session injected with {len(cookies)} cookies",
+            "validated": validated,
+            "message": f"Session injected with {len(cookies)} cookies — {status_msg}",
             "cookie_count": len(cookies),
         }
     except json.JSONDecodeError:
