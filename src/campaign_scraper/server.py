@@ -1027,6 +1027,45 @@ async def cancel_job(job_id: str):
     return {"success": True, "job_id": job_id, "status": "cancelled"}
 
 
+def _validate_session_sync(session_path: Path) -> bool:
+    """Validate a session file with a headless browser. Must run in a thread (not asyncio loop)."""
+    try:
+        from playwright.sync_api import sync_playwright
+        from auth import TJAuthenticator
+
+        auth_helper = TJAuthenticator(TJ_USERNAME, TJ_PASSWORD)
+        auth_helper.session_file = session_path
+
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(headless=True)
+            try:
+                context = auth_helper.load_session(browser)
+                if not context:
+                    return False
+                page = context.new_page()
+                try:
+                    page.goto("https://advertiser.trafficjunky.com/",
+                              wait_until="domcontentloaded", timeout=20000)
+                    return auth_helper.is_logged_in(page)
+                finally:
+                    try:
+                        page.close()
+                    except Exception:
+                        pass
+                    try:
+                        context.close()
+                    except Exception:
+                        pass
+            finally:
+                try:
+                    browser.close()
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.warning(f"Session validation error: {e}")
+        return False
+
+
 @app.post("/session", dependencies=[Depends(verify_bearer)])
 async def inject_session(request: Request):
     """
@@ -1034,8 +1073,8 @@ async def inject_session(request: Request):
     headless browser FIRST, and only write to session file if valid.
     This prevents stale cookies from overwriting a working session.
     """
+    import asyncio
     import json
-    import tempfile
 
     try:
         body = await request.json()
@@ -1052,45 +1091,9 @@ async def inject_session(request: Request):
         with open(tmp_path, "w") as f:
             json.dump(body, f, indent=2)
 
-        # Validate the pushed cookies with a headless browser
-        validated = False
-        try:
-            from playwright.sync_api import sync_playwright
-            from auth import TJAuthenticator
-
-            auth_helper = TJAuthenticator(TJ_USERNAME, TJ_PASSWORD)
-            # Temporarily point session file to candidate
-            orig_session = auth_helper.session_file
-            auth_helper.session_file = tmp_path
-
-            with sync_playwright() as pw:
-                browser = pw.chromium.launch(headless=True)
-                try:
-                    context = auth_helper.load_session(browser)
-                    if context:
-                        page = context.new_page()
-                        try:
-                            page.goto("https://advertiser.trafficjunky.com/",
-                                      wait_until="domcontentloaded", timeout=20000)
-                            validated = auth_helper.is_logged_in(page)
-                        finally:
-                            try:
-                                page.close()
-                            except Exception:
-                                pass
-                            try:
-                                context.close()
-                            except Exception:
-                                pass
-                finally:
-                    try:
-                        browser.close()
-                    except Exception:
-                        pass
-
-            auth_helper.session_file = orig_session
-        except Exception as e:
-            logger.warning(f"Session validation error: {e}")
+        # Validate in a thread to avoid "Sync API inside asyncio loop" error
+        loop = asyncio.get_event_loop()
+        validated = await loop.run_in_executor(None, _validate_session_sync, tmp_path)
 
         global is_authenticated, pool_disabled, pool_disabled_reason, session_needs_reload
 
