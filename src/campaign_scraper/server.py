@@ -1030,11 +1030,12 @@ async def cancel_job(job_id: str):
 @app.post("/session", dependencies=[Depends(verify_bearer)])
 async def inject_session(request: Request):
     """
-    Accept a Playwright storageState (cookies + origins) and write
-    it to the session file. Validates the session with a headless browser
-    before reporting authenticated. Workers reload on next job.
+    Accept a Playwright storageState (cookies + origins), validate with a
+    headless browser FIRST, and only write to session file if valid.
+    This prevents stale cookies from overwriting a working session.
     """
     import json
+    import tempfile
 
     try:
         body = await request.json()
@@ -1043,29 +1044,25 @@ async def inject_session(request: Request):
         if not cookies:
             raise HTTPException(status_code=400, detail="No cookies provided")
 
-        # Write storageState to session file
+        logger.info(f"Session push received: {len(cookies)} cookies — validating before writing...")
+
+        # Write to a temp file first, validate, then move to real session file
         SESSION_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with open(SESSION_FILE, "w") as f:
+        tmp_path = SESSION_FILE.parent / "tj_session_candidate.json"
+        with open(tmp_path, "w") as f:
             json.dump(body, f, indent=2)
 
-        logger.info(f"Session injected: {len(cookies)} cookies written to {SESSION_FILE}")
-
-        global is_authenticated, pool_disabled, pool_disabled_reason, session_needs_reload
-        session_needs_reload = True
-
-        # Clear pool_disabled — fresh session means we should try again
-        if pool_disabled:
-            logger.info("Session push clearing pool_disabled state")
-            pool_disabled = False
-            pool_disabled_reason = ""
-
-        # Validate the session before reporting authenticated
+        # Validate the pushed cookies with a headless browser
         validated = False
         try:
             from playwright.sync_api import sync_playwright
             from auth import TJAuthenticator
 
             auth_helper = TJAuthenticator(TJ_USERNAME, TJ_PASSWORD)
+            # Temporarily point session file to candidate
+            orig_session = auth_helper.session_file
+            auth_helper.session_file = tmp_path
+
             with sync_playwright() as pw:
                 browser = pw.chromium.launch(headless=True)
                 try:
@@ -1090,19 +1087,46 @@ async def inject_session(request: Request):
                         browser.close()
                     except Exception:
                         pass
+
+            auth_helper.session_file = orig_session
         except Exception as e:
-            logger.warning(f"Session validation failed: {e}")
+            logger.warning(f"Session validation error: {e}")
 
-        is_authenticated = validated
-        status_msg = "validated" if validated else "written but NOT validated (session may be expired)"
-        logger.info(f"Session injection result: {status_msg}")
+        global is_authenticated, pool_disabled, pool_disabled_reason, session_needs_reload
 
-        return {
-            "success": True,
-            "validated": validated,
-            "message": f"Session injected with {len(cookies)} cookies — {status_msg}",
-            "cookie_count": len(cookies),
-        }
+        if validated:
+            # Good cookies — move candidate to real session file
+            import shutil
+            shutil.move(str(tmp_path), str(SESSION_FILE))
+            is_authenticated = True
+            session_needs_reload = True
+
+            if pool_disabled:
+                logger.info("Session push clearing pool_disabled state")
+                pool_disabled = False
+                pool_disabled_reason = ""
+
+            logger.info(f"Session validated and saved: {len(cookies)} cookies")
+            return {
+                "success": True,
+                "validated": True,
+                "message": f"Session validated and saved with {len(cookies)} cookies",
+                "cookie_count": len(cookies),
+            }
+        else:
+            # Bad cookies — discard candidate, keep existing session intact
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+            logger.warning(f"Session push REJECTED: {len(cookies)} cookies failed validation — keeping existing session")
+            return {
+                "success": False,
+                "validated": False,
+                "message": f"Pushed cookies failed validation — existing session preserved",
+                "cookie_count": len(cookies),
+            }
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Invalid JSON body")
     except HTTPException:
