@@ -1169,6 +1169,47 @@ _relogin_lock = threading.Lock()
 _relogin_status: dict = {"state": "idle"}  # idle | running | success | failed
 
 
+def _shutdown_worker_pool():
+    """Drain queue, send poison pills, and wait for all worker browsers to close."""
+    global workers_launched, is_authenticated
+
+    # 1. Drain pending jobs from the queue
+    drained = 0
+    while not job_queue.empty():
+        try:
+            job_queue.get_nowait()
+            job_queue.task_done()
+            drained += 1
+        except queue.Empty:
+            break
+
+    # 2. Send poison pills to all alive workers
+    pills_sent = 0
+    with pool_lock:
+        alive_count = sum(1 for t in worker_threads.values() if t.is_alive())
+        for _ in range(alive_count):
+            job_queue.put(None)  # poison pill
+            pills_sent += 1
+
+    logger.info(f"[RELOGIN] Pool shutdown: drained={drained}, pills_sent={pills_sent}")
+
+    # 3. Wait for all worker threads to finish (browsers close on exit)
+    if pills_sent > 0:
+        deadline = time.time() + 30  # 30s max wait
+        for wid, t in list(worker_threads.items()):
+            remaining = max(0.1, deadline - time.time())
+            t.join(timeout=remaining)
+            if t.is_alive():
+                logger.warning(f"[RELOGIN] Worker {wid} did not shut down in time")
+
+    # 4. Reset pool state
+    with pool_lock:
+        workers_launched = 0
+        is_authenticated = False
+
+    logger.info("[RELOGIN] All worker browsers closed")
+
+
 def _relogin_thread():
     """Background thread: try session file first (fast, headless), then manual_login() as fallback."""
     global is_authenticated, pool_disabled, pool_disabled_reason, session_needs_reload, _relogin_status
@@ -1231,6 +1272,9 @@ def _relogin_thread():
                         pass
 
             # ── Step 2: Fall back to manual_login (headed, reCAPTCHA ~20-30s) ──
+            # Close all worker browsers first — they cover the screen and block reCAPTCHA
+            logger.info("[RELOGIN] Shutting down worker pool before headed login...")
+            _shutdown_worker_pool()
             logger.info("[RELOGIN] Starting manual_login()...")
             browser = pw.chromium.launch(headless=False)
             context = browser.new_context()
