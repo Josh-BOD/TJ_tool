@@ -104,7 +104,7 @@ def _build_command(csv_path: str, csv_content: str, dry_run: bool, flow: str | N
 
     Returns (command, flow_used, flow_source) where flow_source is 'explicit' or 'auto-detected'.
     """
-    if flow in ("multilingual", "standard", "template", "v4"):
+    if flow in ("multilingual", "standard", "template", "v4", "shorts"):
         fmt = flow
         flow_source = "explicit"
     else:
@@ -147,6 +147,14 @@ def _build_command(csv_path: str, csv_content: str, dry_run: bool, flow: str | N
                 "--input", csv_path,
                 "--dry-run",
             ]
+    elif fmt == "shorts":
+        cmd = [
+            sys.executable, str(STANDARD_SCRIPT),
+            "--input", csv_path,
+            "--keep-ads",
+        ]
+        if dry_run:
+            cmd.append("--dry-run")
     else:
         cmd = [
             sys.executable, str(STANDARD_SCRIPT),
@@ -407,6 +415,18 @@ def _run_job_parallel(job_id: str, csv_path: str, csv_content: str, dry_run: boo
                 cmd = [
                     sys.executable, str(STANDARD_SCRIPT),
                     "--input", str(chunk_csv),
+                    f"--window-position={quad['x']},{quad['y']}",
+                    f"--window-size={quad['w']},{quad['h']}",
+                ]
+                if use_session:
+                    cmd.extend(["--use-session", "--session-file", str(SESSION_FILE)])
+                if dry_run:
+                    cmd.append("--dry-run")
+            elif actual_flow == "shorts":
+                cmd = [
+                    sys.executable, str(STANDARD_SCRIPT),
+                    "--input", str(chunk_csv),
+                    "--keep-ads",
                     f"--window-position={quad['x']},{quad['y']}",
                     f"--window-size={quad['w']},{quad['h']}",
                 ]

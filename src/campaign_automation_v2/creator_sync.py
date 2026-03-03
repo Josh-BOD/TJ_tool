@@ -45,7 +45,7 @@ class CampaignCreator:
     
     BASE_URL = "https://advertiser.trafficjunky.com"
     
-    def __init__(self, page: Page, ad_format: str = "NATIVE", campaign_type: str = "Standard", content_category: str = "straight"):
+    def __init__(self, page: Page, ad_format: str = "NATIVE", campaign_type: str = "Standard", content_category: str = "straight", keep_ads: bool = False):
         """
         Initialize campaign creator.
 
@@ -54,11 +54,13 @@ class CampaignCreator:
             ad_format: Ad format - "NATIVE" or "INSTREAM" (default: NATIVE)
             campaign_type: Campaign type - "Standard" or "Remarketing" (default: Standard)
             content_category: Content category - "straight", "gay", or "trans" (default: straight)
+            keep_ads: If True, never delete inherited ads (SHORTS flow)
         """
         self.page = page
         self.ad_format = ad_format.upper()
         self.campaign_type = campaign_type.title()
         self.content_category = content_category.lower()
+        self.keep_ads = keep_ads
 
         # Get templates for this format, campaign type, and content category
         self.templates = get_templates(self.ad_format, self.campaign_type, self.content_category)
@@ -127,8 +129,14 @@ class CampaignCreator:
             self._configure_tracking_and_bids(campaign)
             self._configure_schedule_and_budget(campaign)
 
-            # Delete any inherited ads before uploading new ones
-            self._delete_all_ads()
+            # Only delete inherited ads if a CSV will replace them
+            # For SHORTS/template-only campaigns, keep the template's ads
+            if self.keep_ads:
+                logger.info("  Keeping template ads (--keep-ads flag, shorts flow)")
+            elif campaign.csv_file:
+                self._delete_all_ads()
+            else:
+                logger.info("  Keeping template ads (no csv_file — template-only campaign)")
 
             # Configure ad rotation to Autopilot (CTR)
             self._configure_ad_rotation("autopilot", "ctr")
@@ -206,8 +214,14 @@ class CampaignCreator:
             self._configure_tracking_and_bids(campaign)
             self._configure_schedule_and_budget(campaign)
 
-            # Delete any inherited ads before uploading new ones
-            self._delete_all_ads()
+            # Only delete inherited ads if a CSV will replace them
+            # For SHORTS/template-only campaigns, keep the template's ads
+            if self.keep_ads:
+                logger.info("  Keeping template ads (--keep-ads flag, shorts flow)")
+            elif campaign.csv_file:
+                self._delete_all_ads()
+            else:
+                logger.info("  Keeping template ads (no csv_file — template-only campaign)")
 
             # Configure ad rotation to Autopilot (CTR)
             self._configure_ad_rotation("autopilot", "ctr")
@@ -273,8 +287,14 @@ class CampaignCreator:
             self._click_save_and_continue()  # Tracking
             self._click_save_and_continue()  # Budget
 
-            # Delete inherited ads before uploading new ones
-            self._delete_all_ads()
+            # Only delete inherited ads if a CSV will replace them
+            # For SHORTS/template-only campaigns, keep the template's ads
+            if self.keep_ads:
+                logger.info("  Keeping template ads (--keep-ads flag, shorts flow)")
+            elif campaign.csv_file:
+                self._delete_all_ads()
+            else:
+                logger.info("  Keeping template ads (no csv_file — template-only campaign)")
 
             # Configure ad rotation to Autopilot (CTR)
             self._configure_ad_rotation("autopilot", "ctr")
@@ -358,8 +378,14 @@ class CampaignCreator:
             self._configure_tracking_and_bids(campaign)
             self._configure_schedule_and_budget(campaign)
 
-            # Delete any inherited ads before uploading new ones
-            self._delete_all_ads()
+            # Only delete inherited ads if a CSV will replace them
+            # For SHORTS/template-only campaigns, keep the template's ads
+            if self.keep_ads:
+                logger.info("  Keeping template ads (--keep-ads flag, shorts flow)")
+            elif campaign.csv_file:
+                self._delete_all_ads()
+            else:
+                logger.info("  Keeping template ads (no csv_file — template-only campaign)")
 
             # Configure ad rotation to Autopilot (CTR)
             self._configure_ad_rotation("autopilot", "ctr")

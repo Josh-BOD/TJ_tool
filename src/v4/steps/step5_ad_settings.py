@@ -22,18 +22,21 @@ def configure_step5(page: Page, config: V4CampaignConfig, csv_dir: str, campaign
     time.sleep(2)
     dismiss_modals(page)
 
-    # 1. Delete existing ads
-    _delete_all_ads(page)
+    if config.csv_file:
+        # 1. Delete existing ads
+        _delete_all_ads(page)
 
-    # 2. Upload ad CSV
-    csv_path = Path(csv_dir) / config.csv_file
-    if csv_path.exists():
-        _upload_ad_csv(page, csv_path, campaign_name, config)
+        # 2. Upload ad CSV
+        csv_path = Path(csv_dir) / config.csv_file
+        if csv_path.exists():
+            _upload_ad_csv(page, csv_path, campaign_name, config)
+        else:
+            logger.warning(f"    Ad CSV not found: {csv_path}")
+
+        # 3. Configure ad rotation to Autopilot (CTR) — must be after ads exist
+        _configure_ad_rotation(page)
     else:
-        logger.warning(f"    Ad CSV not found: {csv_path}")
-
-    # 3. Configure ad rotation to Autopilot (CTR) — must be after ads exist
-    _configure_ad_rotation(page)
+        logger.info("    Keeping template ads (no csv_file — template-only campaign)")
 
     # 4. Click "Finish Campaign" to save and exit draft
     _finish_campaign(page)
@@ -102,18 +105,80 @@ def _configure_ad_rotation(page: Page):
 
 
 def _finish_campaign(page: Page):
-    """Click the 'Finish Campaign' button to finalize and exit draft."""
-    try:
-        page.click('a.saveContinue[data-gtm-index="saveContinueStepFive"]', timeout=10000)
-        time.sleep(3)
-        logger.info("    Campaign finished (saved)")
-    except Exception:
+    """Click 'Save Campaign', then 'Go to Campaigns' in the success modal.
+
+    Flow:
+    1. Remove disabledInterface class (blocks pointer-events)
+    2. Force-click the Save Campaign button (AJAX save)
+    3. Wait for success modal with "Go to Campaigns" link
+    4. Click "Go to Campaigns" to navigate away
+    """
+    dismiss_modals(page)
+    time.sleep(1)
+
+    url_before = page.url
+
+    for attempt in range(3):
+        # Remove disabledInterface overlay that blocks pointer events
+        page.evaluate('''() => {
+            document.querySelectorAll('.disabledInterface').forEach(el => {
+                el.classList.remove('disabledInterface');
+            });
+        }''')
+        time.sleep(0.3)
+
+        logger.info(f"    [Finish] Clicking Save Campaign (attempt {attempt+1})")
+
         try:
-            page.click('a:has-text("Finish Campaign")', timeout=5000)
+            btn = page.locator('a.saveContinue[data-gtm-index="saveContinueStepFive"]').first
+            if btn.count() == 0:
+                logger.warning("    [Finish] Save Campaign button not found")
+                time.sleep(2)
+                continue
+
+            btn.scroll_into_view_if_needed()
+            time.sleep(0.3)
+            btn.click(force=True, timeout=5000)
+            logger.info("    [Finish] Save Campaign clicked")
+
+            # Wait for AJAX save to complete
             time.sleep(3)
-            logger.info("    Campaign finished (saved)")
+
+            # Look for the success modal with "Go to Campaigns" link
+            go_link = page.locator('a.smallButton.greenButton:has-text("Go to Campaigns")')
+            try:
+                go_link.first.wait_for(state="visible", timeout=15000)
+                logger.info("    [Finish] Success modal appeared — clicking 'Go to Campaigns'")
+                go_link.first.click(timeout=5000)
+                time.sleep(2)
+
+                try:
+                    page.wait_for_load_state("domcontentloaded", timeout=15000)
+                except Exception:
+                    pass
+
+                if page.url != url_before and "ad-settings/edit" not in page.url:
+                    logger.info(f"    Campaign saved — navigated to: {page.url}")
+                    return
+
+            except Exception as modal_err:
+                logger.info(f"    [Finish] No 'Go to Campaigns' modal: {modal_err}")
+
+            # Maybe it already navigated without the modal
+            if page.url != url_before and "ad-settings/edit" not in page.url:
+                logger.info(f"    Campaign saved — navigated to: {page.url}")
+                return
+
+            logger.info(f"    [Finish] Still on: {page.url}")
+
         except Exception as e:
-            logger.warning(f"    Could not click Finish Campaign: {e}")
+            logger.warning(f"    [Finish] Attempt {attempt+1} error: {e}")
+
+        if attempt < 2:
+            time.sleep(2)
+
+    if "ad-settings/edit" in page.url:
+        logger.warning(f"    Could not save campaign — still on {page.url}")
 
 
 def _upload_ad_csv(page: Page, csv_path: Path, campaign_name: str, config: V4CampaignConfig):

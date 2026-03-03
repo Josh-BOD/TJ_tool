@@ -76,18 +76,20 @@ def upload_csv_to_campaign(page, csv_path: Path, campaign_name: str, ad_format: 
         return False
 
 
-def create_campaign_set(page, campaign: CampaignDefinition, csv_dir: Path):
+def create_campaign_set(page, campaign: CampaignDefinition, csv_dir: Path, keep_ads: bool = False):
     """Create all variants for a campaign definition."""
     ad_format = campaign.settings.ad_format
     campaign_type = campaign.settings.campaign_type
     content_category = campaign.settings.content_category
-    creator = CampaignCreator(page, ad_format=ad_format, campaign_type=campaign_type, content_category=content_category)
+    creator = CampaignCreator(page, ad_format=ad_format, campaign_type=campaign_type, content_category=content_category, keep_ads=keep_ads)
     
-    csv_path = csv_dir / campaign.csv_file
-    if not csv_path.exists():
+    # SHORTS campaigns have no csv_file (ads baked into template) — skip CSV check
+    has_csv = bool(campaign.csv_file)
+    csv_path = csv_dir / campaign.csv_file if has_csv else None
+    if has_csv and not csv_path.exists():
         logger.error(f"CSV file not found: {csv_path}")
         return
-    
+
     geo = campaign.geo[0] if campaign.geo else "US"
     created_campaigns = []
     
@@ -122,9 +124,13 @@ def create_campaign_set(page, campaign: CampaignDefinition, csv_dir: Path):
             
             logger.info(f"✓ Created campaign: {campaign_name}")
             logger.info(f"  ID: {campaign_id}")
-            
+
             # Upload CSV — don't replace sub11, TJ fills {CampaignName} dynamically
-            upload_csv_to_campaign(page, csv_path, None, ad_format)
+            # Skip for SHORTS — ads are baked into the template, no CSV upload needed
+            if has_csv and not keep_ads:
+                upload_csv_to_campaign(page, csv_path, None, ad_format)
+            else:
+                logger.info(f"  Skipping CSV upload (ads baked into template)")
             
             created_campaigns.append((campaign_id, campaign_name))
             
@@ -148,6 +154,7 @@ def run_sync():
     parser.add_argument("--window-size", type=str, help="Chromium window size as W,H (e.g. '960,540')")
     parser.add_argument("--use-session", action="store_true", help="Load saved session instead of manual login")
     parser.add_argument("--session-file", type=str, default="data/session/tj_session.json", help="Path to session JSON file")
+    parser.add_argument("--keep-ads", action="store_true", help="Skip deleting inherited ads (SHORTS flow — ads baked into template)")
     args = parser.parse_args()
 
     # Determine input file: --input flag takes priority, else temp batch file
@@ -246,7 +253,7 @@ def run_sync():
             logger.info(f"Processing {i}/{len(enabled)}: {campaign.group} - {campaign.keywords[0].name if campaign.keywords else 'N/A'}")
             
             try:
-                create_campaign_set(page, campaign, csv_dir)
+                create_campaign_set(page, campaign, csv_dir, keep_ads=args.keep_ads)
             except Exception as e:
                 logger.error(f"Error with {campaign.group}: {e}")
                 continue

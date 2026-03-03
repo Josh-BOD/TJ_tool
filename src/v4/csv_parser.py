@@ -68,7 +68,16 @@ def _row_to_config(row: dict, row_num: int) -> V4CampaignConfig:
     if not group:
         raise V4CSVParseError(f"Row {row_num}: 'group' is required")
     if not csv_file:
-        raise V4CSVParseError(f"Row {row_num}: 'csv_file' is required")
+        logger.info(f"Row {row_num}: no csv_file — template ads will be preserved")
+
+    # Debug: log retargeting columns to catch any alignment issues
+    logger.debug(
+        f"Row {row_num} retargeting columns: "
+        f"retargeting={g('retargeting')!r}, "
+        f"retargeting_type={g('retargeting_type')!r}, "
+        f"retargeting_mode={g('retargeting_mode')!r}, "
+        f"retargeting_value={g('retargeting_value')!r}"
+    )
 
     return V4CampaignConfig(
         enabled=_bool(g("enabled", "TRUE")),
