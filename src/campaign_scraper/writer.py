@@ -847,8 +847,39 @@ def _update_segment_targeting(page: Page, segment_value: str):
             time.sleep(0.8)
         _apply_segments_modal(page, exclude_segments, "excluded", "Exclude Segment")
 
-    # Skip dedup — let TJ's own modal JS handle field state
-    # Directly writing to el.value may bypass TJ's framework state
+    # Deduplicate segments — TJ silently rejects forms with duplicate segment IDs
+    page.evaluate('''() => {
+        const el = document.getElementById("segments");
+        if (!el || !el.value) return;
+        try {
+            const data = JSON.parse(el.value);
+            let changed = false;
+            if (data.included && data.included.length > 0) {
+                const seen = new Set();
+                const before = data.included.length;
+                data.included = data.included.filter(s => {
+                    if (seen.has(s.id)) return false;
+                    seen.add(s.id);
+                    return true;
+                });
+                if (data.included.length < before) changed = true;
+            }
+            if (data.excluded && data.excluded.length > 0) {
+                const seen = new Set();
+                const before = data.excluded.length;
+                data.excluded = data.excluded.filter(s => {
+                    if (seen.has(s.id)) return false;
+                    seen.add(s.id);
+                    return true;
+                });
+                if (data.excluded.length < before) changed = true;
+            }
+            if (changed) {
+                el.value = JSON.stringify(data);
+                el.dispatchEvent(new Event("change", {bubbles: true}));
+            }
+        } catch(e) {}
+    }''')
 
     # Debug: check hidden #segments field after all segment config (before save)
     seg_final = page.evaluate('''() => {
