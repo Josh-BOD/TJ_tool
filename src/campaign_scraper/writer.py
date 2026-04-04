@@ -941,38 +941,30 @@ def _update_segment_targeting(page: Page, segment_value: str):
         else:
             include_segments.append(seg)
 
-    # Clear existing segments via UI buttons (not JS field manipulation)
-    # This prevents duplicates when re-adding segments
-    page.evaluate('''() => {
-        // Click "Remove all" for included segments
-        const links = document.querySelectorAll('a');
-        for (const a of links) {
-            const parent = a.closest('div, section');
-            if (parent && parent.textContent.includes('Included Segments') &&
-                (a.textContent.trim() === 'Remove all' || a.textContent.trim() === 'Remove All')) {
-                a.click();
-                break;
-            }
-        }
-        // Click "Remove all" for excluded segments
-        for (const a of links) {
-            const parent = a.closest('div, section');
-            if (parent && parent.textContent.includes('Exclude Segments') &&
-                (a.textContent.trim() === 'Remove all' || a.textContent.trim() === 'Remove All')) {
-                a.click();
-                break;
-            }
-        }
-    }''')
-    time.sleep(1)
+    # Don't clear existing — instead check before adding to prevent duplicates
 
-    # Process include segments using the proven V4 function
+    # Process include segments — only add segments not already present
     if include_segments:
         try:
-            from v4.steps.step2_geo_audience import _configure_segments as v4_configure_segments
-            from v4.models import V4CampaignConfig
-            config = V4CampaignConfig(segment_targeting=";".join(include_segments))
-            v4_configure_segments(page, config)
+            # Check which segments are already included
+            existing = page.evaluate('''() => {
+                const el = document.getElementById("segments");
+                if (!el || !el.value) return [];
+                try {
+                    const data = JSON.parse(el.value);
+                    return (data.included || []).map(s => s.text);
+                } catch(e) { return []; }
+            }''')
+
+            # Filter out already-included segments
+            to_add = [s for s in include_segments if s not in existing]
+            if not to_add:
+                logger.info(f"  All {len(include_segments)} include segment(s) already present — skipping")
+            else:
+                from v4.steps.step2_geo_audience import _configure_segments as v4_configure_segments
+                from v4.models import V4CampaignConfig
+                config = V4CampaignConfig(segment_targeting=";".join(to_add))
+                v4_configure_segments(page, config)
 
             # Deduplicate segments in the hidden field
             page.evaluate('''() => {
@@ -1025,14 +1017,24 @@ def _update_segment_targeting(page: Page, segment_value: str):
         }''')
         logger.info(f"  [DEBUG] After include config: {seg_debug}")
 
-    # Process exclude segments via manual modal flow
+    # Process exclude segments — only add segments not already excluded
     if exclude_segments:
-        # Ensure toggle is on (V4 _configure_segments enables it for includes,
-        # but if we only have excludes we need to enable it here)
-        if not include_segments:
-            enable_toggle(page, "campaign_segmentTargeting")
-            time.sleep(0.8)
-        _apply_segments_modal(page, exclude_segments, "excluded", "Exclude Segment")
+        existing_excl = page.evaluate('''() => {
+            const el = document.getElementById("segments");
+            if (!el || !el.value) return [];
+            try {
+                const data = JSON.parse(el.value);
+                return (data.excluded || []).map(s => s.text);
+            } catch(e) { return []; }
+        }''')
+        to_exclude = [s for s in exclude_segments if s not in existing_excl]
+
+        if not to_exclude:
+            logger.info(f"  All {len(exclude_segments)} exclude segment(s) already present — skipping")
+        else:
+            if not include_segments:
+                _set_section_toggle(page, "campaign_segmentTargeting", "#segment_targeting", True)
+            _apply_segments_modal(page, to_exclude, "excluded", "Exclude Segment")
 
     # Deduplicate segments — TJ silently rejects forms with duplicate segment IDs
     page.evaluate('''() => {
