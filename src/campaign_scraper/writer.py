@@ -354,14 +354,53 @@ def _update_geo(page: Page, geo_value: str):
     for geo in geos:
         country_name = COUNTRY_MAP.get(geo.upper(), geo)
         try:
-            page.click('span[id="select2-geo_country-container"]')
+            # Open select2 via jQuery API (more reliable than clicking the container)
+            page.evaluate('''() => { $("#geo_country").select2("open"); }''')
+            time.sleep(0.8)
+
+            # Type search and trigger AJAX via jQuery events
+            search = page.locator('.select2-container--open .select2-search__field')
+            search.fill("")
+            page.evaluate(f'''(name) => {{
+                const sf = document.querySelector(".select2-container--open .select2-search__field");
+                if (sf) {{
+                    $(sf).val(name).trigger("input").trigger("keyup");
+                }}
+            }}''', country_name)
+            time.sleep(2)
+
+            # Wait for AJAX results (not "Searching...")
+            for _ in range(10):
+                found = page.evaluate(f'''(name) => {{
+                    const opts = document.querySelectorAll("li.select2-results__option");
+                    for (const o of opts) {{
+                        if (o.textContent.includes(name)) return true;
+                    }}
+                    return false;
+                }}''', country_name)
+                if found:
+                    break
+                time.sleep(0.5)
+
+            # Select the result via mouseup (select2 uses mouseup, not click)
+            selected = page.evaluate(f'''(name) => {{
+                const opts = document.querySelectorAll("li.select2-results__option");
+                for (const o of opts) {{
+                    if (o.textContent.includes(name)) {{
+                        o.dispatchEvent(new MouseEvent("mouseup", {{bubbles: true}}));
+                        return true;
+                    }}
+                }}
+                return false;
+            }}''', country_name)
+
+            if not selected:
+                logger.warning(f"  Geo '{country_name}' not found in select2 results")
+                page.keyboard.press("Escape")
+                time.sleep(0.3)
+                continue
+
             time.sleep(0.5)
-            search = page.locator('input.select2-search__field[placeholder="Type here to search"]')
-            search.fill(country_name)
-            time.sleep(1)
-            option = page.locator('li.select2-results__option').filter(has_text=country_name).first
-            option.click(timeout=5000)
-            time.sleep(0.3)
             page.wait_for_selector('button#addLocation:not([disabled])', timeout=5000)
             page.click('button#addLocation')
             time.sleep(0.5)
@@ -584,20 +623,36 @@ def _update_browser_language(page: Page, lang_value: str):
         else:
             break
 
-    # Select new language via select2
-    s2 = section.locator(".select2-container").first
-    s2.scroll_into_view_if_needed()
-    time.sleep(0.3)
-    s2.click()
-    time.sleep(0.5)
+    # Select new language via jQuery select2 API + mouseup
+    page.evaluate('''() => { $("#browser_language_name").select2("open"); }''')
+    time.sleep(0.8)
 
-    search = page.locator(".select2-container--open .select2-search__field")
-    search.fill(lang_name)
-    time.sleep(0.5)
-    try:
-        page.locator(".select2-results__option").filter(has_text=lang_name).first.click()
-    except Exception as e:
-        logger.warning(f"  Could not select language {lang_name}: {e}")
+    page.evaluate(f'''(name) => {{
+        const sf = document.querySelector(".select2-container--open .select2-search__field");
+        if (sf) {{ $(sf).val(name).trigger("input").trigger("keyup"); }}
+    }}''', lang_name)
+    time.sleep(2)
+
+    # Wait for AJAX results and select via mouseup
+    selected = False
+    for _ in range(10):
+        result = page.evaluate(f'''(name) => {{
+            const opts = document.querySelectorAll("li.select2-results__option");
+            for (const o of opts) {{
+                if (o.textContent.includes(name)) {{
+                    o.dispatchEvent(new MouseEvent("mouseup", {{bubbles: true}}));
+                    return true;
+                }}
+            }}
+            return false;
+        }}''', lang_name)
+        if result:
+            selected = True
+            break
+        time.sleep(0.5)
+
+    if not selected:
+        logger.warning(f"  Could not select language {lang_name}")
         page.keyboard.press("Escape")
         return
     time.sleep(0.3)
