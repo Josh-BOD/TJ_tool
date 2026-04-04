@@ -847,6 +847,33 @@ def _update_segment_targeting(page: Page, segment_value: str):
             time.sleep(0.8)
         _apply_segments_modal(page, exclude_segments, "excluded", "Exclude Segment")
 
+    # Final dedup + cleanup of the hidden #segments field before save
+    page.evaluate('''() => {
+        const el = document.getElementById("segments");
+        if (!el || !el.value) return;
+        try {
+            const data = JSON.parse(el.value);
+            if (data.included) {
+                const seen = new Set();
+                data.included = data.included.filter(s => {
+                    if (seen.has(s.id)) return false;
+                    seen.add(s.id);
+                    return true;
+                });
+            }
+            if (data.excluded) {
+                const seen = new Set();
+                data.excluded = data.excluded.filter(s => {
+                    if (seen.has(s.id)) return false;
+                    seen.add(s.id);
+                    return true;
+                });
+            }
+            el.value = JSON.stringify(data);
+            el.dispatchEvent(new Event("change", {bubbles: true}));
+        } catch(e) {}
+    }''')
+
     # Debug: check hidden #segments field after all segment config (before save)
     seg_final = page.evaluate('''() => {
         const el = document.getElementById("segments");
