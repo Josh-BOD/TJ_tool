@@ -317,15 +317,26 @@ def _update_geo(page: Page, geo_value: str):
         sep = ";" if ";" in geo_value else ","
         geos = [g.strip() for g in geo_value.split(sep) if g.strip()]
 
-    # Wait for geo section
-    try:
-        page.wait_for_selector(
-            'span[id="select2-geo_country-container"]',
-            state="visible", timeout=15000,
-        )
-    except Exception:
-        logger.warning("  Geo selector not found, waiting longer...")
-        time.sleep(3)
+    # Wait for geo select2 to be initialized (can take several seconds after page load)
+    geo_ready = False
+    for attempt in range(6):
+        try:
+            page.wait_for_selector(
+                'span[id="select2-geo_country-container"]',
+                state="visible", timeout=10000,
+            )
+            geo_ready = True
+            break
+        except Exception:
+            logger.warning(f"  Geo selector not visible (attempt {attempt + 1}/6), waiting...")
+            time.sleep(3)
+            # Check if we got redirected to sign-in
+            if "sign-in" in page.url:
+                logger.error("  Session expired — redirected to sign-in")
+                return
+    if not geo_ready:
+        logger.error("  Geo selector not found after 60s — skipping geo update")
+        return
 
     # Remove existing geos
     try:
@@ -1499,8 +1510,13 @@ def update_campaign(page: Page, campaign_id: str, fields: dict, dry_run: bool = 
     for page_num in pages_needed:
         url = url_map[page_num].format(base=BASE_URL, cid=campaign_id)
         logger.info(f"Navigating to page {page_num}: {url}")
-        page.goto(url, wait_until="networkidle")
-        time.sleep(1)
+        page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        # Wait for page to fully render — networkidle is unreliable for select2/jQuery
+        try:
+            page.wait_for_load_state("networkidle", timeout=15000)
+        except Exception:
+            pass
+        time.sleep(3)  # Extra wait for select2/jQuery widgets to initialize
         dismiss_modals(page)
 
         # Filter fields for this page
