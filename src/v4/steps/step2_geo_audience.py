@@ -580,8 +580,38 @@ def _configure_segments(page: Page, config: V4CampaignConfig):
     Supports multiple segments separated by semicolons:
       "Intent to buy AI;Interested in AI"
     """
-    enable_toggle(page, "campaign_segmentTargeting")
-    time.sleep(0.8)
+    # Enable the toggle by clicking the visible onoffswitch label (not the hidden checkbox).
+    # Clicking the label triggers TJ's JS that reveals the segment links and initializes
+    # form bindings. Clicking the hidden checkbox directly via enable_toggle() doesn't
+    # trigger the full UI initialization.
+    page.evaluate('''() => {
+        const section = document.querySelector("#campaign_segmentTargeting");
+        if (section) section.scrollIntoView({block: "center"});
+    }''')
+    time.sleep(0.5)
+
+    # Check if already enabled
+    is_on = page.evaluate('''() => {
+        const section = document.querySelector("#campaign_segmentTargeting");
+        if (!section) return false;
+        const cb = section.querySelector("input[type='checkbox']");
+        return cb ? cb.checked : false;
+    }''')
+
+    if not is_on:
+        # Click the visible onoffswitch label (same pattern as OS targeting)
+        try:
+            page.click('.onoffswitch-label[data-input="#segment_targeting"]', timeout=5000)
+        except Exception:
+            # Fallback: try other label patterns
+            try:
+                page.click('#campaign_segmentTargeting .onoffswitch-label', timeout=3000)
+            except Exception:
+                # Last resort: use enable_toggle
+                enable_toggle(page, "campaign_segmentTargeting")
+        time.sleep(1.5)
+    else:
+        time.sleep(0.5)
 
     segments = [s.strip() for s in config.segment_targeting.split(";") if s.strip()]
 
