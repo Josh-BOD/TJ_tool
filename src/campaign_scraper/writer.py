@@ -105,12 +105,20 @@ LANGUAGE_MAP = {
     "RO": "Romanian", "TH": "Thai",
 }
 
-# Step URLs for editing
+# Step URLs for editing (live campaigns)
 STEP_URLS = {
     1: "{base}/campaign/{cid}",
     2: "{base}/campaign/{cid}/audience",
     3: "{base}/campaign/{cid}/tracking-spots-rules",
     4: "{base}/campaign/{cid}/schedule-budget",
+}
+
+# Step URLs for draft campaigns
+DRAFT_STEP_URLS = {
+    1: "{base}/campaign/drafts/{cid}/basic-settings/edit",
+    2: "{base}/campaign/drafts/{cid}/audience/edit",
+    3: "{base}/campaign/drafts/{cid}/tracking-sources-rules/edit",
+    4: "{base}/campaign/drafts/{cid}/schedule-budget/edit",
 }
 
 
@@ -1319,10 +1327,18 @@ def _save_audience_page(page: Page):
     url_before = page.url
     logger.info(f"  Saving audience page from {url_before}")
 
-    # Click Save & Continue via JS (avoids visibility issues with modals)
+    # Click Save & Continue (or Save Changes for drafts) via JS
     page.evaluate('''() => {
-        const btn = document.querySelector("button.confirmAudience.saveAndContinue");
-        if (btn) btn.click();
+        const btn = document.querySelector("button.confirmAudience.saveAndContinue")
+                 || document.querySelector("button.saveAndContinue");
+        if (btn) { btn.click(); return; }
+        // Draft fallback: "Save Changes" button
+        const buttons = document.querySelectorAll("button");
+        for (const b of buttons) {
+            if (b.textContent.trim() === "Save Changes" && b.offsetHeight > 0) {
+                b.click(); return;
+            }
+        }
     }''')
 
     # Poll for modal or URL change for up to 30 seconds
@@ -1459,15 +1475,16 @@ def _save_audience_page(page: Page):
             pass
 
 
-def update_campaign(page: Page, campaign_id: str, fields: dict, dry_run: bool = False) -> dict:
+def update_campaign(page: Page, campaign_id: str, fields: dict, dry_run: bool = False, is_draft: bool = False) -> dict:
     """
     Update specific campaign fields by navigating to the appropriate pages.
 
     Args:
         page: Playwright page (already authenticated)
-        campaign_id: TJ external campaign ID
+        campaign_id: TJ external campaign ID (or draft ID)
         fields: flat dict of field_name -> new_value
         dry_run: if True, navigate and log but don't save
+        is_draft: if True, use draft campaign URLs
 
     Returns:
         {"updated_pages": list[int], "fields_applied": list[str]}
@@ -1476,10 +1493,11 @@ def update_campaign(page: Page, campaign_id: str, fields: dict, dry_run: bool = 
     if not pages_needed:
         return {"updated_pages": [], "fields_applied": []}
 
+    url_map = DRAFT_STEP_URLS if is_draft else STEP_URLS
     fields_applied = []
 
     for page_num in pages_needed:
-        url = STEP_URLS[page_num].format(base=BASE_URL, cid=campaign_id)
+        url = url_map[page_num].format(base=BASE_URL, cid=campaign_id)
         logger.info(f"Navigating to page {page_num}: {url}")
         page.goto(url, wait_until="networkidle")
         time.sleep(1)
