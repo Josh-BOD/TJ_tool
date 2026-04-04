@@ -1332,33 +1332,67 @@ def _save_audience_page(page: Page):
                 return "";
             }''')
         except Exception:
+            # Page navigation interrupted evaluate — wait and re-check for modals
+            # TJ often shows "Review Source Bids" / "Match Suggested CPM" modal
+            # at the same time as the page navigation event
+            time.sleep(3)
             try:
-                time.sleep(2)
                 landed_url = page.url
-                logger.info(f"  Page navigated during modal check → {landed_url}")
-                # Check for validation errors on the page
-                errors = page.evaluate('''() => {
-                    const errs = [];
-                    document.querySelectorAll('.error, .alert-danger, .validation-error, .field-error, [class*="error"], [class*="Error"]').forEach(el => {
-                        if (el.offsetHeight > 0 && el.textContent.trim()) errs.push(el.textContent.trim().substring(0, 100));
-                    });
-                    // Also check for toast/notification messages
-                    document.querySelectorAll('.toast, .notification, [class*="toast"], [class*="notification"]').forEach(el => {
-                        if (el.offsetHeight > 0 && el.textContent.trim()) errs.push("TOAST: " + el.textContent.trim().substring(0, 100));
-                    });
-                    return errs.slice(0, 5);
-                }''')
-                if errors:
-                    logger.warning(f"  Page errors after save: {errors}")
-                # Check if we're still on the same page (save failed) vs navigated forward
+                logger.info(f"  Page event during modal check → {landed_url}")
+
+                # If still on audience page, a modal likely appeared — keep polling
                 if "/audience" in landed_url:
-                    logger.warning(f"  SAVE FAILED — still on audience page (page reloaded without advancing)")
-                    # Take screenshot for debugging
-                    try:
-                        page.screenshot(path="/tmp/save_failed_audience.png")
-                        logger.info(f"  Screenshot saved: /tmp/save_failed_audience.png")
-                    except Exception:
-                        pass
+                    logger.info(f"  Still on audience page — checking for bid review modal...")
+                    for retry in range(40):  # 20 more seconds
+                        time.sleep(0.5)
+                        try:
+                            current_url = page.url
+                            if current_url != landed_url:
+                                logger.info(f"  After modal handling: {current_url}")
+                                return
+
+                            modal_result = page.evaluate('''() => {
+                                const modals = document.querySelectorAll(".modal");
+                                for (const modal of modals) {
+                                    if (modal.offsetHeight > 0 && modal.offsetWidth > 0) {
+                                        const buttons = modal.querySelectorAll("button");
+                                        for (const btn of buttons) {
+                                            const text = btn.textContent.trim();
+                                            if (text.includes("Match Suggested CPM") && btn.offsetHeight > 0) {
+                                                btn.click();
+                                                return "matched_cpm";
+                                            }
+                                        }
+                                        for (const btn of buttons) {
+                                            if (btn.offsetHeight > 0 && (btn.classList.contains("greenButton") || btn.classList.contains("btn-primary"))) {
+                                                btn.click();
+                                                return "clicked_" + btn.textContent.trim().substring(0, 20);
+                                            }
+                                        }
+                                        return "modal_visible_id=" + modal.id;
+                                    }
+                                }
+                                return "";
+                            }''')
+                            if modal_result:
+                                logger.info(f"  Modal (retry {retry}): {modal_result}")
+                                time.sleep(3)
+                                try:
+                                    if page.url != landed_url:
+                                        logger.info(f"  After modal accept: {page.url}")
+                                        return
+                                except Exception:
+                                    return
+                        except Exception:
+                            # Page navigated during retry — likely save succeeded
+                            try:
+                                logger.info(f"  Page navigated during modal retry → {page.url}")
+                            except Exception:
+                                pass
+                            return
+                    logger.warning(f"  No modal found after 20s on audience page — save may have failed")
+                else:
+                    logger.info(f"  Navigated forward — save succeeded")
             except Exception:
                 logger.info(f"  Page navigated during modal check (URL unknown)")
             return
