@@ -792,8 +792,8 @@ def _update_segment_targeting(page: Page, segment_value: str):
         else:
             include_segments.append(seg)
 
-    # Clear existing segments first (V4 _configure_segments enables the toggle itself)
-    _clear_existing_segments(page)
+    # Skip clearing — let V4 _configure_segments handle everything cleanly
+    # _clear_existing_segments(page)  # Disabled: may corrupt form state
 
     # Process include segments using the proven V4 function
     if include_segments:
@@ -847,32 +847,8 @@ def _update_segment_targeting(page: Page, segment_value: str):
             time.sleep(0.8)
         _apply_segments_modal(page, exclude_segments, "excluded", "Exclude Segment")
 
-    # Final dedup + cleanup of the hidden #segments field before save
-    page.evaluate('''() => {
-        const el = document.getElementById("segments");
-        if (!el || !el.value) return;
-        try {
-            const data = JSON.parse(el.value);
-            if (data.included) {
-                const seen = new Set();
-                data.included = data.included.filter(s => {
-                    if (seen.has(s.id)) return false;
-                    seen.add(s.id);
-                    return true;
-                });
-            }
-            if (data.excluded) {
-                const seen = new Set();
-                data.excluded = data.excluded.filter(s => {
-                    if (seen.has(s.id)) return false;
-                    seen.add(s.id);
-                    return true;
-                });
-            }
-            el.value = JSON.stringify(data);
-            el.dispatchEvent(new Event("change", {bubbles: true}));
-        } catch(e) {}
-    }''')
+    # Skip dedup — let TJ's own modal JS handle field state
+    # Directly writing to el.value may bypass TJ's framework state
 
     # Debug: check hidden #segments field after all segment config (before save)
     seg_final = page.evaluate('''() => {
@@ -1356,7 +1332,11 @@ def _save_audience_page(page: Page):
                 return "";
             }''')
         except Exception:
-            logger.info(f"  Page navigated during modal check")
+            try:
+                landed_url = page.url
+                logger.info(f"  Page navigated during modal check → {landed_url}")
+            except Exception:
+                logger.info(f"  Page navigated during modal check (URL unknown)")
             return
         if modal_result:
             logger.info(f"  Modal: {modal_result}")
