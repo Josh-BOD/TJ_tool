@@ -941,8 +941,30 @@ def _update_segment_targeting(page: Page, segment_value: str):
         else:
             include_segments.append(seg)
 
-    # Skip clearing — let V4 _configure_segments handle everything cleanly
-    # _clear_existing_segments(page)  # Disabled: may corrupt form state
+    # Clear existing segments via UI buttons (not JS field manipulation)
+    # This prevents duplicates when re-adding segments
+    page.evaluate('''() => {
+        // Click "Remove all" for included segments
+        const links = document.querySelectorAll('a');
+        for (const a of links) {
+            const parent = a.closest('div, section');
+            if (parent && parent.textContent.includes('Included Segments') &&
+                (a.textContent.trim() === 'Remove all' || a.textContent.trim() === 'Remove All')) {
+                a.click();
+                break;
+            }
+        }
+        // Click "Remove all" for excluded segments
+        for (const a of links) {
+            const parent = a.closest('div, section');
+            if (parent && parent.textContent.includes('Exclude Segments') &&
+                (a.textContent.trim() === 'Remove all' || a.textContent.trim() === 'Remove All')) {
+                a.click();
+                break;
+            }
+        }
+    }''')
+    time.sleep(1)
 
     # Process include segments using the proven V4 function
     if include_segments:
