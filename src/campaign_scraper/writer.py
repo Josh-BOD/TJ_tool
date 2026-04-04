@@ -1333,8 +1333,32 @@ def _save_audience_page(page: Page):
             }''')
         except Exception:
             try:
+                time.sleep(2)
                 landed_url = page.url
                 logger.info(f"  Page navigated during modal check → {landed_url}")
+                # Check for validation errors on the page
+                errors = page.evaluate('''() => {
+                    const errs = [];
+                    document.querySelectorAll('.error, .alert-danger, .validation-error, .field-error, [class*="error"], [class*="Error"]').forEach(el => {
+                        if (el.offsetHeight > 0 && el.textContent.trim()) errs.push(el.textContent.trim().substring(0, 100));
+                    });
+                    // Also check for toast/notification messages
+                    document.querySelectorAll('.toast, .notification, [class*="toast"], [class*="notification"]').forEach(el => {
+                        if (el.offsetHeight > 0 && el.textContent.trim()) errs.push("TOAST: " + el.textContent.trim().substring(0, 100));
+                    });
+                    return errs.slice(0, 5);
+                }''')
+                if errors:
+                    logger.warning(f"  Page errors after save: {errors}")
+                # Check if we're still on the same page (save failed) vs navigated forward
+                if "/audience" in landed_url:
+                    logger.warning(f"  SAVE FAILED — still on audience page (page reloaded without advancing)")
+                    # Take screenshot for debugging
+                    try:
+                        page.screenshot(path="/tmp/save_failed_audience.png")
+                        logger.info(f"  Screenshot saved: /tmp/save_failed_audience.png")
+                    except Exception:
+                        pass
             except Exception:
                 logger.info(f"  Page navigated during modal check (URL unknown)")
             return
