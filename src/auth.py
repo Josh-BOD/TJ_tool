@@ -439,15 +439,14 @@ class TJAuthenticator:
                         # Wait a moment for any JS to settle
                         page.wait_for_timeout(800)
                         
-                        # Click the login button (JS click to bypass overlay/actionability issues)
+                        # Click the login button — try Playwright click first, JS fallback
                         try:
-                            page.evaluate('''() => {
-                                const btn = document.querySelector('#submitBtn') ||
-                                            document.querySelector('button[type="submit"]') ||
-                                            document.querySelector('input[type="submit"]');
-                                if (btn) btn.click();
-                            }''')
-                            logger.info("✓ LOGIN button clicked (via JS)! Waiting for redirect...")
+                            try:
+                                login_button.click(timeout=3000)
+                            except Exception:
+                                # Playwright click failed (overlay), try force click
+                                login_button.click(force=True, timeout=3000)
+                            logger.info("✓ LOGIN button clicked! Waiting for redirect...")
                             
                             # Wait for navigation/login to complete
                             page.wait_for_timeout(4000)
