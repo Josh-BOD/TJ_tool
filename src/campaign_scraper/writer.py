@@ -1294,20 +1294,30 @@ def _apply_page3_fields(page: Page, fields: dict):
     if "tracker_id" in fields:
         _update_tracker(page, fields["tracker_id"])
 
-    if "target_cpa" in fields:
-        wait_and_fill(page, "#target_cpa", str(fields["target_cpa"]))
-
-    if "per_source_test_budget" in fields:
-        wait_and_fill(page, "#per_source_test_budget", str(fields["per_source_test_budget"]))
-
-    if "max_bid" in fields:
-        wait_and_fill(page, "#maximum_bid", str(fields["max_bid"]))
-
+    # Smart bidder MUST be set first — it controls which bid fields are visible
     if "smart_bidder" in fields:
         _update_smart_bidder(page, fields["smart_bidder"])
 
-    if "optimization_option" in fields:
-        _update_optimization_option(page, fields["optimization_option"])
+    # Now fill bid fields (visible based on smart_bidder mode)
+    # Smart CPM mode: max_bid only
+    # Bidder (CPA) mode: target_cpa, per_source_test_budget, max_bid
+    if "target_cpa" in fields:
+        try:
+            wait_and_fill(page, "#target_cpa", str(fields["target_cpa"]))
+        except Exception:
+            logger.warning("  target_cpa field not visible (Smart CPM mode?) — skipping")
+
+    if "per_source_test_budget" in fields:
+        try:
+            wait_and_fill(page, "#per_source_test_budget", str(fields["per_source_test_budget"]))
+        except Exception:
+            logger.warning("  per_source_test_budget not visible — skipping")
+
+    if "max_bid" in fields:
+        try:
+            wait_and_fill(page, "#maximum_bid", str(fields["max_bid"]))
+        except Exception:
+            logger.warning("  max_bid not visible (auto bidding may hide it) — skipping")
 
 
 def _update_tracker(page: Page, tracker_value: str):
