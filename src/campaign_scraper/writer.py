@@ -776,8 +776,8 @@ def _update_segment_targeting(page: Page, segment_value: str):
     """Enable segment targeting with support for EXCLUDE: prefixed segments.
 
     Format: "Interested in Hentai;EXCLUDE:Intent to buy VOD-Hentai"
-    - Segments without prefix → included
-    - Segments with "EXCLUDE:" prefix → excluded
+    - Segments without prefix → included (uses proven V4 _configure_segments)
+    - Segments with "EXCLUDE:" prefix → excluded (manual modal flow)
     """
     if not segment_value:
         return
@@ -792,18 +792,42 @@ def _update_segment_targeting(page: Page, segment_value: str):
         else:
             include_segments.append(seg)
 
-    # Enable the segment targeting toggle
+    # Clear existing segments first
     enable_toggle(page, "campaign_segmentTargeting")
     time.sleep(0.8)
-
-    # Clear existing segments first
     _clear_existing_segments(page)
 
-    # Process include segments
+    # Process include segments using the proven V4 function
     if include_segments:
-        _apply_segments_modal(page, include_segments, "included", "Include Segment")
+        try:
+            from v4.steps.step2_geo_audience import _configure_segments as v4_configure_segments
+            from v4.models import V4CampaignConfig
+            config = V4CampaignConfig(segment_targeting=";".join(include_segments))
+            v4_configure_segments(page, config)
 
-    # Process exclude segments
+            # Deduplicate segments in the hidden field
+            page.evaluate('''() => {
+                const el = document.getElementById("segments");
+                if (!el || !el.value) return;
+                try {
+                    const data = JSON.parse(el.value);
+                    if (data.included) {
+                        const seen = new Set();
+                        data.included = data.included.filter(s => {
+                            if (seen.has(s.id)) return false;
+                            seen.add(s.id);
+                            return true;
+                        });
+                    }
+                    el.value = JSON.stringify(data);
+                } catch(e) {}
+            }''')
+            logger.info(f"  Segment targeting (included): {len(include_segments)} segment(s) via V4")
+        except Exception as e:
+            logger.warning(f"  V4 segment include failed, falling back to modal: {e}")
+            _apply_segments_modal(page, include_segments, "included", "Include Segment")
+
+    # Process exclude segments via manual modal flow
     if exclude_segments:
         _apply_segments_modal(page, exclude_segments, "excluded", "Exclude Segment")
 
