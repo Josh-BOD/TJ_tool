@@ -238,6 +238,59 @@ def _apply_page1_fields(page: Page, fields: dict):
 
 
 # ═══════════════════════════════════════════════════════════════════
+# Toggle utilities for audience sections
+# ═══════════════════════════════════════════════════════════════════
+
+def _is_section_on(page: Page, section_id: str) -> bool:
+    """Check if a toggle-controlled section is ON."""
+    return page.evaluate(f'''() => {{
+        const section = document.getElementById("{section_id}");
+        if (!section) return false;
+        const cb = section.querySelector("input[type='checkbox']");
+        return cb ? cb.checked : false;
+    }}''')
+
+
+def _set_section_toggle(page: Page, section_id: str, label_data_input: str, want_on: bool):
+    """Turn a toggle-controlled section ON or OFF using the visible onoffswitch label.
+
+    Args:
+        section_id: e.g. "campaign_operatingSystemsTargeting"
+        label_data_input: e.g. "#operating_systems" (the data-input attribute on the label)
+        want_on: True to enable, False to disable
+    """
+    is_on = _is_section_on(page, section_id)
+
+    if is_on == want_on:
+        return  # Already in desired state
+
+    # Scroll to section
+    page.evaluate(f'''() => {{
+        const s = document.getElementById("{section_id}");
+        if (s) s.scrollIntoView({{block: "center"}});
+    }}''')
+    time.sleep(0.3)
+
+    # Click the visible onoffswitch label (not the hidden checkbox)
+    try:
+        page.click(f'.onoffswitch-label[data-input="{label_data_input}"]', timeout=5000)
+    except Exception:
+        # Fallback: click any onoffswitch label inside the section
+        try:
+            page.click(f'#{section_id} .onoffswitch-label', timeout=3000)
+        except Exception:
+            # Last resort: use enable_toggle/disable_toggle
+            if want_on:
+                enable_toggle(page, section_id)
+            else:
+                disable_toggle(page, section_id)
+    time.sleep(1.5)
+
+    state = "ON" if want_on else "OFF"
+    logger.info(f"  Toggle {section_id}: {state}")
+
+
+# ═══════════════════════════════════════════════════════════════════
 # Page 2: Audience & Targeting
 # ═══════════════════════════════════════════════════════════════════
 
@@ -418,34 +471,29 @@ def _update_geo(page: Page, geo_value: str):
 
 # ── OS Targeting ─────────────────────────────────────────────────
 
-def _enable_os_section(page: Page):
-    """Enable the OS targeting section — scroll, toggle, and force-show content."""
-    page.evaluate('''() => {
-        const section = document.querySelector("#campaign_operatingSystemsTargeting");
-        if (!section) return;
-        section.scrollIntoView({block: "center"});
-    }''')
-    time.sleep(0.5)
-
-    page.click('.onoffswitch-label[data-input="#operating_systems"]')
-    time.sleep(1.5)
-
-    try:
-        page.wait_for_selector(
-            'span[id="select2-operating_systems_list_include-container"]',
-            state="visible", timeout=5000,
-        )
-        logger.info("  OS targeting: section enabled")
-    except Exception:
-        logger.warning("  OS targeting: select2 still hidden after toggle")
-
-
 def _update_os_targeting(page: Page, fields: dict):
-    """Update OS include/exclude targeting."""
-    _enable_os_section(page)
-    time.sleep(1)
+    """Update OS include/exclude targeting.
 
-    # Remove existing OS entries
+    Handles toggle state: turns ON if adding OS entries, removes all and turns OFF if clearing.
+    """
+    os_include = fields.get("os_include", "")
+    os_exclude = fields.get("os_exclude", "")
+    has_entries = bool(os_include or os_exclude)
+
+    # Turn ON if we need to add entries
+    if has_entries:
+        _set_section_toggle(page, "campaign_operatingSystemsTargeting", "#operating_systems", True)
+
+        # Wait for OS select2 to be visible
+        try:
+            page.wait_for_selector(
+                'span[id="select2-operating_systems_list_include-container"]',
+                state="visible", timeout=10000,
+            )
+        except Exception:
+            logger.warning("  OS select2 not visible after toggle ON")
+
+    # Remove existing OS entries first
     try:
         remove_all = page.locator('a.removeAll[data-selection="include"]')
         if remove_all.count() > 0 and remove_all.first.is_visible(timeout=2000):
@@ -464,8 +512,13 @@ def _update_os_targeting(page: Page, fields: dict):
     except Exception:
         pass
 
-    # Include
-    os_include = fields.get("os_include", "")
+    # If no entries to add, turn OFF and return
+    if not has_entries:
+        _set_section_toggle(page, "campaign_operatingSystemsTargeting", "#operating_systems", False)
+        logger.info("  OS targeting: cleared and disabled")
+        return
+
+    # Add includes
     if os_include:
         for os_name in os_include.split(";"):
             os_name = os_name.strip()
@@ -473,8 +526,7 @@ def _update_os_targeting(page: Page, fields: dict):
                 _add_single_os_include(page, os_name, fields)
         logger.info(f"  OS include: {os_include}")
 
-    # Exclude
-    os_exclude = fields.get("os_exclude", "")
+    # Add excludes
     if os_exclude:
         for os_name in os_exclude.split(";"):
             os_name = os_name.strip()
@@ -485,19 +537,23 @@ def _update_os_targeting(page: Page, fields: dict):
 
 def _add_single_os_include(page: Page, os_name: str, fields: dict):
     """Add a single OS to the include list with optional version constraint."""
-    os_select = page.locator('span[id="select2-operating_systems_list_include-container"]')
-    try:
-        os_select.wait_for(state="visible", timeout=10000)
-        os_select.scroll_into_view_if_needed()
-        os_select.click(timeout=5000)
-    except Exception:
-        logger.warning("  OS select2 not visible after waiting")
-        return
+    # Open select2 via jQuery API + select via mouseup
+    page.evaluate('''() => { $("#operating_systems_list_include").select2("open"); }''')
     time.sleep(0.5)
-    try:
-        page.click(f'li.select2-results__option:has-text("{os_name}")')
-    except Exception as e:
-        logger.warning(f"  Could not select OS {os_name}: {e}")
+
+    selected = page.evaluate(f'''(name) => {{
+        const opts = document.querySelectorAll("li.select2-results__option");
+        for (const o of opts) {{
+            if (o.textContent.trim() === name) {{
+                o.dispatchEvent(new MouseEvent("mouseup", {{bubbles: true}}));
+                return true;
+            }}
+        }}
+        return false;
+    }}''', os_name)
+
+    if not selected:
+        logger.warning(f"  OS {os_name} not found in dropdown")
         page.keyboard.press("Escape")
         return
     time.sleep(0.3)
@@ -567,8 +623,12 @@ def _set_version_constraint(page: Page, op: str, version: str):
 # ── Browser Targeting ────────────────────────────────────────────
 
 def _update_browser_targeting(page: Page, browsers_value: str):
-    """Enable browser targeting and select browsers."""
-    enable_toggle(page, "campaign_browserTargeting")
+    """Enable browser targeting and select browsers. Empty value turns toggle OFF."""
+    if not browsers_value:
+        _set_section_toggle(page, "campaign_browserTargeting", "#browser_targeting", False)
+        logger.info("  Browser targeting: disabled")
+        return
+    _set_section_toggle(page, "campaign_browserTargeting", "#browser_targeting", True)
     time.sleep(0.5)
 
     if isinstance(browsers_value, list):
@@ -591,11 +651,26 @@ def _update_browser_targeting(page: Page, browsers_value: str):
 # ── Browser Language ─────────────────────────────────────────────
 
 def _update_browser_language(page: Page, lang_value: str):
-    """Enable browser language targeting and select language."""
+    """Enable browser language targeting and select language.
+
+    If lang_value is empty, removes all and turns toggle OFF.
+    """
+    if not lang_value:
+        # Clear and disable
+        if _is_section_on(page, "campaign_browserLanguageTargeting"):
+            # Remove existing first
+            page.evaluate('''() => {
+                const section = document.querySelector("#campaign_browserLanguageTargeting");
+                if (section) section.querySelectorAll("a[class*='remove']").forEach(btn => btn.click());
+            }''')
+            time.sleep(0.5)
+            _set_section_toggle(page, "campaign_browserLanguageTargeting", "#browser_language", False)
+        logger.info("  Browser language: cleared and disabled")
+        return
+
     lang_name = LANGUAGE_MAP.get(lang_value.upper(), lang_value)
 
-    enable_toggle(page, "campaign_browserLanguageTargeting")
-    time.sleep(0.5)
+    _set_section_toggle(page, "campaign_browserLanguageTargeting", "#browser_language", True)
 
     section = page.locator("#campaign_browserLanguageTargeting")
     section.scroll_into_view_if_needed()
@@ -1118,26 +1193,94 @@ def _apply_segments_modal(page: Page, segments: list, targeting_type: str, butto
 # ── Keywords ─────────────────────────────────────────────────────
 
 def _update_keywords(page: Page, kw_value):
-    """Set keywords via the hidden JSON input."""
+    """Set keywords via the select2 UI (not hidden field — direct JSON modification doesn't persist).
+
+    Format: semicolon-separated keywords. [brackets] = broad match, plain = exact.
+    To clear all keywords, pass empty string.
+    """
     if isinstance(kw_value, str):
         kw_raw = [k.strip() for k in kw_value.split(";") if k.strip()]
     else:
         kw_raw = kw_value
 
-    kw_entries = []
-    for kw in kw_raw:
-        if isinstance(kw, str) and kw.startswith("[") and kw.endswith("]"):
-            kw_entries.append({"keyword": kw[1:-1], "type": "broad"})
-        else:
-            kw_entries.append({"keyword": kw, "type": "exact"})
-    kw_json = json.dumps(kw_entries)
+    # Ensure keyword toggle is ON (if there are keywords to add)
+    if kw_raw:
+        # Check if keyword section exists and toggle is available
+        has_kw_section = page.evaluate('''() => !!document.querySelector('#keyword_select')''')
+        if not has_kw_section:
+            logger.warning("  Keyword section not found — format may not support keywords")
+            return
 
-    page.evaluate(f'''() => {{
-        const el = document.querySelector("#keywords");
-        if (el) {{ el.value = {repr(kw_json)}; el.dispatchEvent(new Event("change", {{bubbles:true}})); }}
-    }}''')
-    time.sleep(0.3)
-    logger.info(f"  Keywords: {len(kw_entries)} keyword(s) set")
+    # Remove existing keywords first
+    page.evaluate('''() => {
+        const removeAll = document.querySelector('a.removeAllKeywords[data-selection-type="include"]');
+        if (removeAll) removeAll.click();
+    }''')
+    time.sleep(0.5)
+
+    if not kw_raw:
+        logger.info("  Keywords: cleared all")
+        return
+
+    # Add keywords one by one via select2 UI
+    added = 0
+    for kw in kw_raw:
+        is_broad = kw.startswith("[") and kw.endswith("]")
+        keyword = kw[1:-1] if is_broad else kw
+
+        try:
+            # Open select2
+            page.evaluate('''() => { $("#keyword_select").select2("open"); }''')
+            time.sleep(0.5)
+
+            # Type and search
+            page.evaluate(f'''(term) => {{
+                const sf = document.querySelector(".select2-container--open .select2-search__field");
+                if (sf) {{ $(sf).val(term).trigger("input").trigger("keyup"); }}
+            }}''', keyword)
+            time.sleep(1.5)
+
+            # Select first matching result via mouseup
+            selected = page.evaluate(f'''(term) => {{
+                const opts = document.querySelectorAll("li.select2-results__option");
+                for (const o of opts) {{
+                    if (o.textContent.trim().toLowerCase().includes(term.toLowerCase())) {{
+                        o.dispatchEvent(new MouseEvent("mouseup", {{bubbles: true}}));
+                        return true;
+                    }}
+                }}
+                return false;
+            }}''', keyword)
+
+            if selected:
+                time.sleep(0.3)
+                # Set broad match if needed
+                if is_broad:
+                    page.evaluate(f'''(term) => {{
+                        // Find the keyword item and click the "Broad" radio
+                        const items = document.querySelectorAll('.keyword-item, [class*="keywordItem"]');
+                        for (const item of items) {{
+                            if (item.textContent.includes(term)) {{
+                                const broad = item.querySelector('input[value="broad"], label:has-text("Broad")');
+                                if (broad) broad.click();
+                                break;
+                            }}
+                        }}
+                    }}''', keyword)
+                added += 1
+            else:
+                logger.warning(f"  Keyword '{keyword}' not found in select2")
+                page.keyboard.press("Escape")
+                time.sleep(0.3)
+        except Exception as e:
+            logger.warning(f"  Could not add keyword '{keyword}': {e}")
+            try:
+                page.keyboard.press("Escape")
+            except Exception:
+                pass
+            time.sleep(0.3)
+
+    logger.info(f"  Keywords: {added}/{len(kw_raw)} added via UI")
 
 
 # ── Match Type ───────────────────────────────────────────────────
