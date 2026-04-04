@@ -825,6 +825,19 @@ def _update_segment_targeting(page: Page, segment_value: str):
             logger.warning(f"  V4 segment include failed, falling back to modal: {e}")
             _apply_segments_modal(page, include_segments, "included", "Include Segment")
 
+    # Debug: check hidden #segments field after include config
+    if include_segments:
+        seg_debug = page.evaluate('''() => {
+            const el = document.getElementById("segments");
+            const toggle = document.querySelector("#campaign_segmentTargeting input[type='checkbox']");
+            return {
+                segmentsField: el ? el.value.substring(0, 500) : "NOT FOUND",
+                toggleChecked: toggle ? toggle.checked : null,
+                segmentSectionVisible: !!document.querySelector("#campaign_segmentTargeting")
+            };
+        }''')
+        logger.info(f"  [DEBUG] After include config: {seg_debug}")
+
     # Process exclude segments via manual modal flow
     if exclude_segments:
         # Ensure toggle is on (V4 _configure_segments enables it for includes,
@@ -833,6 +846,17 @@ def _update_segment_targeting(page: Page, segment_value: str):
             enable_toggle(page, "campaign_segmentTargeting")
             time.sleep(0.8)
         _apply_segments_modal(page, exclude_segments, "excluded", "Exclude Segment")
+
+    # Debug: check hidden #segments field after all segment config (before save)
+    seg_final = page.evaluate('''() => {
+        const el = document.getElementById("segments");
+        const toggle = document.querySelector("#campaign_segmentTargeting input[type='checkbox']");
+        return {
+            segmentsField: el ? el.value.substring(0, 500) : "NOT FOUND",
+            toggleChecked: toggle ? toggle.checked : null,
+        };
+    }''')
+    logger.info(f"  [DEBUG] Before save — segments field: {seg_final}")
 
 
 def _clear_existing_segments(page: Page):
