@@ -1493,21 +1493,39 @@ def _apply_page4_fields(page: Page, fields: dict):
             }}''')
             logger.info(f"  Set daily_budget = {budget_val}")
 
-    if "frequency_cap" in fields:
-        enable_toggle(page, "frequency_cap")
-        wait_and_fill(page, "#frequency_cap_times", str(fields["frequency_cap"]))
+    if "frequency_cap" in fields or "frequency_cap_every" in fields:
+        _set_section_toggle(page, "frequency_cap", "#frequency_cap", True)
 
-    if "frequency_cap_every" in fields:
-        enable_toggle(page, "frequency_cap")
-        wait_and_fill(page, "#frequency_cap_every", str(fields["frequency_cap_every"]))
+        if "frequency_cap" in fields:
+            wait_and_fill(page, "#frequency_cap_times", str(fields["frequency_cap"]))
+        if "frequency_cap_every" in fields:
+            wait_and_fill(page, "#frequency_cap_every", str(fields["frequency_cap_every"]))
 
-    if "start_date" in fields:
-        enable_toggle(page, "duration")
-        wait_and_fill(page, "#start_date", fields["start_date"])
+    if "start_date" in fields or "end_date" in fields:
+        # Enable duration toggle via visible label
+        _set_section_toggle(page, "duration", "#duration", True)
 
-    if "end_date" in fields:
-        enable_toggle(page, "duration")
-        wait_and_fill(page, "#end_date", fields["end_date"])
+        if "start_date" in fields:
+            # Use jQuery datepicker to set date (direct val doesn't trigger datepicker state)
+            page.evaluate(f'''(dateVal) => {{
+                const el = document.querySelector("#start_date");
+                if (!el) return;
+                el.removeAttribute("disabled");
+                $(el).val(dateVal).trigger("change");
+                // Also try datepicker API
+                try {{ $(el).datepicker("setDate", dateVal); }} catch(e) {{}}
+            }}''', fields["start_date"])
+            time.sleep(0.3)
+
+        if "end_date" in fields:
+            page.evaluate(f'''(dateVal) => {{
+                const el = document.querySelector("#end_date");
+                if (!el) return;
+                el.removeAttribute("disabled");
+                $(el).val(dateVal).trigger("change");
+                try {{ $(el).datepicker("setDate", dateVal); }} catch(e) {{}}
+            }}''', fields["end_date"])
+            time.sleep(0.3)
 
     if "schedule_dayparting" in fields:
         _update_dayparting(page, fields["schedule_dayparting"])
