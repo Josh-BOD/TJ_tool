@@ -439,10 +439,15 @@ class TJAuthenticator:
                         # Wait a moment for any JS to settle
                         page.wait_for_timeout(800)
                         
-                        # Click the login button
+                        # Click the login button (JS click to bypass overlay/actionability issues)
                         try:
-                            login_button.click(timeout=5000)
-                            logger.info("✓ LOGIN button clicked! Waiting for redirect...")
+                            page.evaluate('''() => {
+                                const btn = document.querySelector('#submitBtn') ||
+                                            document.querySelector('button[type="submit"]') ||
+                                            document.querySelector('input[type="submit"]');
+                                if (btn) btn.click();
+                            }''')
+                            logger.info("✓ LOGIN button clicked (via JS)! Waiting for redirect...")
                             
                             # Wait for navigation/login to complete
                             page.wait_for_timeout(4000)
