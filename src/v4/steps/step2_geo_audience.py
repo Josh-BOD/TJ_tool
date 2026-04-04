@@ -516,10 +516,12 @@ def _configure_income(page: Page, config: V4CampaignConfig):
 
 def _configure_retargeting(page: Page, config: V4CampaignConfig):
     """Enable retargeting toggle and configure type/mode/value."""
+
+    # Always enable the toggle — it activates the select2 dropdown
     enable_toggle(page, "campaign_retargeting")
     time.sleep(0.5)
 
-    # Type: click or impression
+    # Type: click or impression (always set)
     if config.retargeting_type:
         try:
             page.click(f'#retargeting_type_{config.retargeting_type}', timeout=3000)
@@ -527,21 +529,23 @@ def _configure_retargeting(page: Page, config: V4CampaignConfig):
             safe_click(page, f'label:has-text("{config.retargeting_type.title()}")')
         time.sleep(0.3)
 
-    # Mode: include or exclude
-    if config.retargeting_mode:
+    # Mode: include or exclude — skip for Remarketing (mode is pre-set to "include")
+    if not config.is_remarketing and config.retargeting_mode:
         try:
             page.click(f'#retargeting_mode_{config.retargeting_mode}', timeout=3000)
         except Exception:
             safe_click(page, f'label:has-text("{config.retargeting_mode.title()}")')
         time.sleep(0.3)
 
-    # Value: audience/pixel name
+    # Value: audience/pixel name (or campaign name for Remarketing)
+    # Use longer timeout — dropdown can take >60s to populate
     if config.retargeting_value:
         try:
             select2_choose(
                 page,
                 '#retargeting_value + .select2-container, span[id*="retargeting_value"]',
                 config.retargeting_value,
+                timeout=90000,
             )
         except Exception as e:
             logger.warning(f"    Could not select retargeting value: {e}")
@@ -571,17 +575,100 @@ def _configure_vr(page: Page, config: V4CampaignConfig):
 # ─── Segment Targeting ───────────────────────────────────────────
 
 def _configure_segments(page: Page, config: V4CampaignConfig):
-    """Enable segment targeting toggle and select segment."""
+    """Enable segment targeting toggle and select segments via TJ modal.
+
+    Supports multiple segments separated by semicolons:
+      "Intent to buy AI;Interested in AI"
+    """
     enable_toggle(page, "campaign_segmentTargeting")
-    time.sleep(0.5)
+    time.sleep(0.8)
+
+    segments = [s.strip() for s in config.segment_targeting.split(";") if s.strip()]
 
     try:
-        select2_choose(
-            page,
-            '#segments + .select2-container, span[id*="segments"]',
-            config.segment_targeting,
-        )
-    except Exception as e:
-        logger.warning(f"    Could not select segment: {e}")
+        # Scroll to segment section and click via JS (section may be collapsed)
+        clicked = page.evaluate('''() => {
+            const section = document.querySelector("#campaign_segmentTargeting");
+            if (section) section.scrollIntoView({behavior: "instant", block: "center"});
+            const link = document.querySelector('a.openSegmentTargetingModal[data-targeting-segment-type="included"]');
+            if (link) { link.click(); return true; }
+            return false;
+        }''')
+        if not clicked:
+            logger.warning("    Select segment link not found via JS")
+            return
+        time.sleep(2)
 
-    logger.info(f"    Segment: {config.segment_targeting}")
+        # Wait for modal to fully load (not just "Loading...")
+        for _ in range(15):
+            loading = page.evaluate('''() => {
+                const modals = document.querySelectorAll('[class*="modal"]');
+                for (const m of modals) {
+                    if (m.offsetHeight > 0 && m.innerText.includes("Loading")) return true;
+                }
+                return false;
+            }''')
+            if not loading:
+                break
+            time.sleep(1)
+        time.sleep(1)
+
+        search_input = page.locator('input[placeholder*="VOD"], input[placeholder*="Try"]').first
+
+        for segment_name in segments:
+            search_input.fill("")
+            search_input.fill(segment_name)
+            time.sleep(1)
+
+            # Wait for search results to load
+            for _ in range(10):
+                loading = page.evaluate('''() => {
+                    const modals = document.querySelectorAll('[class*="modal"]');
+                    for (const m of modals) {
+                        if (m.offsetHeight > 0 && m.innerText.includes("Loading")) return true;
+                    }
+                    return false;
+                }''')
+                if not loading:
+                    break
+                time.sleep(1)
+            time.sleep(0.5)
+
+            # Click checkbox via JS (find item containing the segment name text)
+            checked = page.evaluate('''(name) => {
+                const items = document.querySelectorAll('label, li, [class*="segment"], [class*="Segment"]');
+                for (const item of items) {
+                    if (item.textContent.includes(name)) {
+                        const cb = item.querySelector('input[type="checkbox"]');
+                        if (cb && !cb.checked) {
+                            cb.click();
+                            cb.dispatchEvent(new Event("change", {bubbles: true}));
+                            return "checked";
+                        }
+                        if (cb && cb.checked) return "already checked";
+                    }
+                }
+                return "not found";
+            }''', segment_name)
+
+            if "checked" in checked:
+                logger.info(f"    ✓ Segment: {segment_name}")
+            else:
+                logger.warning(f"    Segment '{segment_name}': {checked}")
+
+        # Click "Include Segment" button
+        page.evaluate('''() => {
+            const buttons = document.querySelectorAll('button');
+            for (const b of buttons) {
+                if (b.textContent.includes("Include Segment") && b.offsetHeight > 0) {
+                    b.click();
+                    return true;
+                }
+            }
+            return false;
+        }''')
+        time.sleep(1)
+
+        logger.info(f"    Segment targeting: {len(segments)} segment(s) configured")
+    except Exception as e:
+        logger.warning(f"    Could not set segment targeting: {e}")

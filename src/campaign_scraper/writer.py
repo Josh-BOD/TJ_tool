@@ -792,9 +792,7 @@ def _update_segment_targeting(page: Page, segment_value: str):
         else:
             include_segments.append(seg)
 
-    # Clear existing segments first
-    enable_toggle(page, "campaign_segmentTargeting")
-    time.sleep(0.8)
+    # Clear existing segments first (V4 _configure_segments enables the toggle itself)
     _clear_existing_segments(page)
 
     # Process include segments using the proven V4 function
@@ -829,6 +827,11 @@ def _update_segment_targeting(page: Page, segment_value: str):
 
     # Process exclude segments via manual modal flow
     if exclude_segments:
+        # Ensure toggle is on (V4 _configure_segments enables it for includes,
+        # but if we only have excludes we need to enable it here)
+        if not include_segments:
+            enable_toggle(page, "campaign_segmentTargeting")
+            time.sleep(0.8)
         _apply_segments_modal(page, exclude_segments, "excluded", "Exclude Segment")
 
 
