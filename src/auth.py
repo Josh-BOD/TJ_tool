@@ -385,14 +385,14 @@ class TJAuthenticator:
             logger.info(f"Waiting up to {timeout} seconds...")
             logger.info("")
             
-            # Wait for LOGIN button to be visible (it's actually an input element!)
+            # Wait for LOGIN button to be visible
             logger.info("Looking for LOGIN button...")
             try:
-                # The LOGIN button is an input element with ID submitBtn
-                login_button_selector = 'input#submitBtn, input[type="submit"], input[value*="LOG IN"]'
+                # TJ uses #submitBtn (input or button), or a button with "LOG IN" text
+                login_button_selector = '#submitBtn, input[type="submit"], button[type="submit"]'
                 page.wait_for_selector(login_button_selector, state='visible', timeout=10000)
-                logger.info("✓ LOGIN button found (input#submitBtn)")
-                login_button = page.locator('input#submitBtn').first
+                logger.info("✓ LOGIN button found")
+                login_button = page.locator(login_button_selector).first
                     
             except Exception as e:
                 logger.error(f"✗ LOGIN button not found: {e}")
