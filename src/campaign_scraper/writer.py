@@ -1231,52 +1231,96 @@ PAGE_APPLIERS = {
 }
 
 
-def _accept_review_bids_modal(page: Page):
-    """Accept the 'Review your bids' modal that TJ shows after audience/targeting changes.
+def _save_audience_page(page: Page):
+    """Save the audience page using the same modal-handling flow as the campaign builder.
 
-    This modal MUST be accepted (not dismissed) for changes to persist.
-    Dismissing it via the X button cancels the save.
+    TJ can show multiple types of modals after audience changes:
+    - "Match Suggested CPM" (CPM campaigns)
+    - "Review your bids" (bid changes)
+    - Generic confirmation modals
+
+    This function clicks Save & Continue, then polls for modals and URL change
+    for up to 30 seconds — matching the proven builder flow.
     """
-    try:
-        modal_visible = page.evaluate('''() => {
-            const modal = document.querySelector('#reviewYourBidsModal');
-            if (!modal) return false;
-            return modal.classList.contains('show') || modal.classList.contains('in')
-                   || (modal.style.display !== 'none' && modal.offsetHeight > 0);
-        }''')
+    url_before = page.url
+    logger.info(f"  Saving audience page from {url_before}")
 
-        if not modal_visible:
+    # Click Save & Continue via JS (avoids visibility issues with modals)
+    page.evaluate('''() => {
+        const btn = document.querySelector("button.confirmAudience.saveAndContinue");
+        if (btn) btn.click();
+    }''')
+
+    # Poll for modal or URL change for up to 30 seconds
+    for i in range(60):
+        time.sleep(0.5)
+
+        # Check if URL changed (save succeeded)
+        try:
+            current_url = page.url
+        except Exception:
+            logger.info(f"  Page navigated (context destroyed)")
+            return
+        if current_url != url_before and "sign-in" not in current_url:
+            logger.info(f"  After save: {current_url}")
             return
 
-        logger.info("  Review bids modal detected — accepting...")
-
-        # Click the accept/confirm/save button (NOT the X close)
-        accepted = page.evaluate('''() => {
-            const modal = document.querySelector('#reviewYourBidsModal');
-            if (!modal) return false;
-            const buttons = modal.querySelectorAll('button, a.btn, a.button');
-            for (const btn of buttons) {
-                const text = btn.textContent.trim().toLowerCase();
-                if (text.includes('accept') || text.includes('confirm') || text.includes('ok')
-                    || text.includes('yes') || text.includes('save') || text.includes('continue')) {
-                    btn.click();
-                    return true;
+        # Check for and accept any modal
+        try:
+            modal_result = page.evaluate('''() => {
+                const modals = document.querySelectorAll(".modal");
+                for (const modal of modals) {
+                    if (modal.offsetHeight > 0 && modal.offsetWidth > 0) {
+                        const buttons = modal.querySelectorAll("button");
+                        // Look for "Match Suggested CPM" first (CPM campaigns)
+                        for (const btn of buttons) {
+                            const text = btn.textContent.trim();
+                            if (text.includes("Match Suggested CPM") && btn.offsetHeight > 0) {
+                                btn.click();
+                                return "matched_cpm";
+                            }
+                        }
+                        // Accept/confirm buttons (review bids, etc.)
+                        for (const btn of buttons) {
+                            const text = btn.textContent.trim().toLowerCase();
+                            if (btn.offsetHeight > 0 && (
+                                text.includes("accept") || text.includes("confirm") ||
+                                text.includes("ok") || text.includes("yes") ||
+                                text.includes("save") || text.includes("continue")
+                            )) {
+                                btn.click();
+                                return "accepted_" + btn.textContent.trim().substring(0, 20);
+                            }
+                        }
+                        // Click any green/primary button as fallback
+                        for (const btn of buttons) {
+                            if (btn.offsetHeight > 0 && (btn.classList.contains("greenButton") || btn.classList.contains("btn-primary"))) {
+                                btn.click();
+                                return "clicked_" + btn.textContent.trim().substring(0, 20);
+                            }
+                        }
+                        return "modal_visible_id=" + modal.id;
+                    }
                 }
-            }
-            // Fallback: click the primary/green button
-            const primary = modal.querySelector('.btn-primary, .greenButton, button[type="submit"]');
-            if (primary) { primary.click(); return true; }
-            return false;
-        }''')
-
-        if accepted:
-            time.sleep(2)
-            logger.info("  Review bids modal accepted")
-        else:
-            logger.warning("  Review bids modal visible but no accept button found")
-
-    except Exception as e:
-        logger.warning(f"  Review bids modal handling error: {e}")
+                return "";
+            }''')
+        except Exception:
+            logger.info(f"  Page navigated during modal check")
+            return
+        if modal_result:
+            logger.info(f"  Modal: {modal_result}")
+            time.sleep(3)
+            try:
+                if page.url != url_before:
+                    logger.info(f"  After modal accept: {page.url}")
+                    return
+            except Exception:
+                return
+    else:
+        try:
+            logger.warning(f"  Save & Continue: no navigation after 30s (still on {page.url})")
+        except Exception:
+            pass
 
 
 def update_campaign(page: Page, campaign_id: str, fields: dict, dry_run: bool = False) -> dict:
@@ -1316,9 +1360,12 @@ def update_campaign(page: Page, campaign_id: str, fields: dict, dry_run: bool = 
 
         if not dry_run:
             logger.info(f"Saving page {page_num}...")
-            # Accept review-bids modal before saving (critical for audience page changes)
-            _accept_review_bids_modal(page)
-            click_save_and_continue(page)
+            if page_num == 2:
+                # Page 2 (audience) needs special modal handling — "Match Suggested CPM",
+                # "Review your bids", etc. Use the same flow as the campaign builder.
+                _save_audience_page(page)
+            else:
+                click_save_and_continue(page)
         else:
             logger.info(f"[DRY RUN] Skipping save for page {page_num}")
 
