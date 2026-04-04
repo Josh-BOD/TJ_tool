@@ -1204,6 +1204,54 @@ PAGE_APPLIERS = {
 }
 
 
+def _accept_review_bids_modal(page: Page):
+    """Accept the 'Review your bids' modal that TJ shows after audience/targeting changes.
+
+    This modal MUST be accepted (not dismissed) for changes to persist.
+    Dismissing it via the X button cancels the save.
+    """
+    try:
+        modal_visible = page.evaluate('''() => {
+            const modal = document.querySelector('#reviewYourBidsModal');
+            if (!modal) return false;
+            return modal.classList.contains('show') || modal.classList.contains('in')
+                   || (modal.style.display !== 'none' && modal.offsetHeight > 0);
+        }''')
+
+        if not modal_visible:
+            return
+
+        logger.info("  Review bids modal detected — accepting...")
+
+        # Click the accept/confirm/save button (NOT the X close)
+        accepted = page.evaluate('''() => {
+            const modal = document.querySelector('#reviewYourBidsModal');
+            if (!modal) return false;
+            const buttons = modal.querySelectorAll('button, a.btn, a.button');
+            for (const btn of buttons) {
+                const text = btn.textContent.trim().toLowerCase();
+                if (text.includes('accept') || text.includes('confirm') || text.includes('ok')
+                    || text.includes('yes') || text.includes('save') || text.includes('continue')) {
+                    btn.click();
+                    return true;
+                }
+            }
+            // Fallback: click the primary/green button
+            const primary = modal.querySelector('.btn-primary, .greenButton, button[type="submit"]');
+            if (primary) { primary.click(); return true; }
+            return false;
+        }''')
+
+        if accepted:
+            time.sleep(2)
+            logger.info("  Review bids modal accepted")
+        else:
+            logger.warning("  Review bids modal visible but no accept button found")
+
+    except Exception as e:
+        logger.warning(f"  Review bids modal handling error: {e}")
+
+
 def update_campaign(page: Page, campaign_id: str, fields: dict, dry_run: bool = False) -> dict:
     """
     Update specific campaign fields by navigating to the appropriate pages.
@@ -1241,6 +1289,8 @@ def update_campaign(page: Page, campaign_id: str, fields: dict, dry_run: bool = 
 
         if not dry_run:
             logger.info(f"Saving page {page_num}...")
+            # Accept review-bids modal before saving (critical for audience page changes)
+            _accept_review_bids_modal(page)
             click_save_and_continue(page)
         else:
             logger.info(f"[DRY RUN] Skipping save for page {page_num}")
