@@ -1384,12 +1384,23 @@ def _update_smart_bidder(page: Page, bidder_value: str):
         time.sleep(1.5)
         logger.info("  Auto bidding: enabled (confirmed modal)")
 
-    # Select smart_cpm or smart_cpa
+    # Select Smart CPM or Bidder (CPA) via the tab buttons
+    # TJ uses label.btn tabs ("Smart CPM" / "Bidder"), not hidden radios
     if "cpm" in bidder_value.lower():
-        safe_click(page, '#is_bidder_on_smart_cpm, label[for="is_bidder_on_smart_cpm"]')
-    elif "cpa" in bidder_value.lower():
-        safe_click(page, '#is_bidder_on_smart_cpa, label[for="is_bidder_on_smart_cpa"]')
-    time.sleep(0.3)
+        page.evaluate('''() => {
+            const labels = document.querySelectorAll("label.btn");
+            for (const l of labels) {
+                if (l.textContent.includes("Smart CPM") && l.offsetHeight > 0) { l.click(); return; }
+            }
+        }''')
+    elif "cpa" in bidder_value.lower() or "bidder" in bidder_value.lower():
+        page.evaluate('''() => {
+            const labels = document.querySelectorAll("label.btn");
+            for (const l of labels) {
+                if (l.textContent.includes("Bidder") && l.offsetHeight > 0) { l.click(); return; }
+            }
+        }''')
+    time.sleep(0.5)
 
     logger.info(f"  Smart bidder: {bidder_value}")
 
