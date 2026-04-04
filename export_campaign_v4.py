@@ -37,6 +37,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://advertiser.trafficjunky.com"
+
+
+class PageBlockedError(Exception):
+    """Raised when a TJ page is blocked (e.g., login redirect, 404)."""
+    pass
 OUTPUT_DIR = Path(__file__).parent / "data" / "output" / "V4_Campaign_Export"
 
 
@@ -649,18 +654,35 @@ def read_page2(page: Page, campaign_id: str) -> dict:
     # ── Segment Targeting ─────────────────────────────────────────
     d["segment_targeting"] = ""
 
-    if _is_checkbox_on(page, "segment_targeting"):
-        # Read the actual selected cookie name from the <select> element
+    seg_on = _is_checkbox_on(page, "segment_targeting")
+    logger.info(f"  Segment toggle checked: {seg_on}")
+    if seg_on:
+        # Try new-style segments (Buyer/Intent/Interest) from #segments hidden JSON
         d["segment_targeting"] = _js_str(page, '''
             (() => {
-                const sel = document.querySelector("#cookie");
-                if (!sel) return "";
-                const opts = Array.from(sel.selectedOptions || []);
-                if (opts.length > 0) return opts.map(o => o.textContent.trim()).join(", ");
-                if (sel.selectedIndex >= 0) return sel.options[sel.selectedIndex]?.textContent?.trim() || "";
-                return "";
+                const el = document.querySelector("#segments");
+                if (!el || !el.value) return "";
+                try {
+                    const data = JSON.parse(el.value);
+                    const names = [];
+                    if (data.included) names.push(...data.included.map(s => s.text));
+                    if (data.excluded) names.push(...data.excluded.map(s => "EXCLUDE:" + s.text));
+                    return names.join("; ");
+                } catch(e) { return ""; }
             })()
         ''')
+        # Fallback: old-style cookie-based segments from #cookie select
+        if not d["segment_targeting"]:
+            d["segment_targeting"] = _js_str(page, '''
+                (() => {
+                    const sel = document.querySelector("#cookie");
+                    if (!sel) return "";
+                    const opts = Array.from(sel.selectedOptions || []);
+                    if (opts.length > 0) return opts.map(o => o.textContent.trim()).join(", ");
+                    if (sel.selectedIndex >= 0) return sel.options[sel.selectedIndex]?.textContent?.trim() || "";
+                    return "";
+                })()
+            ''')
         # Fallback: select2 container text
         if not d["segment_targeting"]:
             d["segment_targeting"] = _read_select2_text(page, "select2-cookie-container")
