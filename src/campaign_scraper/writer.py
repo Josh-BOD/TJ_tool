@@ -1345,15 +1345,44 @@ def _update_tracker(page: Page, tracker_value: str):
 
 
 def _update_smart_bidder(page: Page, bidder_value: str):
-    """Enable/disable smart bidder and select mode."""
+    """Enable/disable smart bidder and select mode.
+
+    TJ shows an "AUTOMATE BIDDING?" confirmation modal when enabling.
+    Must click the OK <a> link (not a button) to confirm.
+    """
     if not bidder_value:
         # Disable smart bidder
         disable_toggle(page, "automatic_bidding")
         logger.info("  Smart bidder: disabled")
         return
 
-    enable_toggle(page, "automatic_bidding")
-    time.sleep(0.5)
+    # Enable auto bidding via onoffswitch label
+    is_on = page.evaluate('''() => {
+        const cb = document.querySelector("#automatic_bidding");
+        return cb ? cb.checked : false;
+    }''')
+
+    if not is_on:
+        # Click the toggle label
+        try:
+            page.click('.onoffswitch-label[data-input="#automatic_bidding"]', timeout=5000)
+        except Exception:
+            enable_toggle(page, "automatic_bidding")
+        time.sleep(1)
+
+        # Handle "AUTOMATE BIDDING?" confirmation modal (uses <a> links, not buttons)
+        page.evaluate('''() => {
+            const links = document.querySelectorAll("a");
+            for (const a of links) {
+                if (a.textContent.trim() === "OK" && a.offsetHeight > 0) {
+                    a.click();
+                    return true;
+                }
+            }
+            return false;
+        }''')
+        time.sleep(1.5)
+        logger.info("  Auto bidding: enabled (confirmed modal)")
 
     # Select smart_cpm or smart_cpa
     if "cpm" in bidder_value.lower():
@@ -1366,18 +1395,35 @@ def _update_smart_bidder(page: Page, bidder_value: str):
 
 
 def _update_optimization_option(page: Page, opt_value: str):
-    """Set optimization option (balanced, aggressive, conservative)."""
+    """Set optimization option (balanced, top_bid, all_countries).
+
+    Requires automatic bidding to be ON first. The radio inputs are hidden
+    (class radioButtonHidden) — click the label or set via JS.
+    """
     if not opt_value:
         return
 
-    # optimization_option is a radio group
-    try:
-        set_radio(page, "optimization_option", opt_value.lower())
-    except Exception:
-        safe_click(page, f'label:has-text("{opt_value.title()}")')
-    time.sleep(0.3)
+    # Ensure auto bidding is ON (optimization options only visible when enabled)
+    is_on = page.evaluate('''() => {
+        const cb = document.querySelector("#automatic_bidding");
+        return cb ? cb.checked : false;
+    }''')
+    if not is_on:
+        logger.warning("  Optimization option: auto bidding is OFF — cannot set optimization")
+        return
 
-    logger.info(f"  Optimization: {opt_value}")
+    # Set via JS (radios are hidden, labels may also be hidden)
+    result = page.evaluate(f'''(val) => {{
+        const radio = document.querySelector('#optimization_option_' + val);
+        if (!radio) return 'not found: ' + val;
+        radio.checked = true;
+        radio.removeAttribute('disabled');
+        radio.dispatchEvent(new Event('change', {{bubbles: true}}));
+        radio.click();
+        return 'set: ' + val;
+    }}''', opt_value.lower())
+    logger.info(f"  Optimization: {result}")
+    time.sleep(0.3)
 
 
 # ═══════════════════════════════════════════════════════════════════
