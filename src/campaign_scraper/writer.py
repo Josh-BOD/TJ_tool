@@ -1593,36 +1593,44 @@ def _update_dayparting(page: Page, dayparting_value: str):
 # ═══════════════════════════════════════════════════════════════════
 
 def _apply_page5_fields(page: Page, fields: dict):
-    """Apply changed fields on page 5 (ad settings — ad rotation)."""
+    """Apply changed fields on page 5 (ad settings — ad rotation).
+
+    Ad rotation uses label.btn tabs:
+    - Manual / Autopilot (top level)
+    - CTR / CPA (autopilot method, only visible when Autopilot selected)
+
+    Page 5 save uses "Save Changes" button (not Save & Continue).
+    """
     ad_rotation = fields.get("ad_rotation", "")
     autopilot_method = fields.get("autopilot_method", "")
 
     if ad_rotation == "manual":
-        # Click Manual label
         page.evaluate('''() => {
-            const label = document.querySelector('label[data-ad-rotation-trackers="manual"]');
-            if (label) label.click();
+            const labels = document.querySelectorAll("label");
+            for (const l of labels) {
+                if (l.textContent.trim() === "Manual" && l.offsetHeight > 0) { l.click(); return; }
+            }
         }''')
         time.sleep(0.5)
         logger.info("  Ad rotation: manual")
 
     elif ad_rotation == "autopilot":
-        # Click Autopilot label
         page.evaluate('''() => {
-            const label = document.querySelector('label[data-ad-rotation-trackers="autopilot"]');
-            if (label) label.click();
+            const labels = document.querySelectorAll("label");
+            for (const l of labels) {
+                if (l.textContent.trim() === "Autopilot" && l.offsetHeight > 0) { l.click(); return; }
+            }
         }''')
-        time.sleep(0.5)
+        time.sleep(1)
 
-        # Select method (ctr, cpa, epc)
         if autopilot_method:
-            method_id = f"ad_rotation_autopilot_{autopilot_method}"
-            page.evaluate(f'''() => {{
-                const label = document.querySelector('label[for="{method_id}"]');
-                if (label) label.click();
-                const radio = document.getElementById("{method_id}");
-                if (radio) {{ radio.checked = true; radio.dispatchEvent(new Event("change", {{bubbles: true}})); }}
-            }}''')
+            target = autopilot_method.upper()
+            page.evaluate(f'''(target) => {{
+                const labels = document.querySelectorAll("label");
+                for (const l of labels) {{
+                    if (l.textContent.trim().startsWith(target) && l.offsetHeight > 0) {{ l.click(); return; }}
+                }}
+            }}''', target)
             time.sleep(0.3)
 
         logger.info(f"  Ad rotation: autopilot ({autopilot_method or 'default'})")
@@ -1847,6 +1855,18 @@ def update_campaign(page: Page, campaign_id: str, fields: dict, dry_run: bool = 
                 # Page 2 (audience) needs special modal handling — "Match Suggested CPM",
                 # "Review your bids", etc. Use the same flow as the campaign builder.
                 _save_audience_page(page)
+            elif page_num == 5:
+                # Page 5 (ad settings) uses "Save Changes" button, not Save & Continue
+                page.evaluate('''() => {
+                    const buttons = document.querySelectorAll("button");
+                    for (const b of buttons) {
+                        if (b.textContent.trim() === "Save Changes" && b.offsetHeight > 0) {
+                            b.click(); return;
+                        }
+                    }
+                }''')
+                time.sleep(2)
+                logger.info(f"  Page 5 saved via Save Changes")
             else:
                 click_save_and_continue(page)
         else:
