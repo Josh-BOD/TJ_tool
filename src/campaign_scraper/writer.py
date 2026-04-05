@@ -57,6 +57,10 @@ PAGE4_FIELDS = {
     "frequency_cap", "frequency_cap_every", "budget_type", "daily_budget",
 }
 
+PAGE5_FIELDS = {
+    "ad_rotation", "autopilot_method",
+}
+
 for f in PAGE1_FIELDS:
     FIELD_TO_PAGE[f] = 1
 for f in PAGE2_FIELDS:
@@ -65,6 +69,8 @@ for f in PAGE3_FIELDS:
     FIELD_TO_PAGE[f] = 3
 for f in PAGE4_FIELDS:
     FIELD_TO_PAGE[f] = 4
+for f in PAGE5_FIELDS:
+    FIELD_TO_PAGE[f] = 5
 
 # Reverse value maps (human-readable -> form value)
 DEVICE_MAP = {"all": "1", "desktop": "2", "mobile": "3"}
@@ -111,6 +117,7 @@ STEP_URLS = {
     2: "{base}/campaign/{cid}/audience",
     3: "{base}/campaign/{cid}/tracking-spots-rules",
     4: "{base}/campaign/{cid}/schedule-budget",
+    5: "{base}/campaign/{cid}/ad-settings",
 }
 
 # Step URLs for draft campaigns
@@ -119,6 +126,7 @@ DRAFT_STEP_URLS = {
     2: "{base}/campaign/drafts/{cid}/audience/edit",
     3: "{base}/campaign/drafts/{cid}/tracking-sources-rules/edit",
     4: "{base}/campaign/drafts/{cid}/schedule-budget/edit",
+    5: "{base}/campaign/drafts/{cid}/ad-settings/edit",
 }
 
 
@@ -1584,11 +1592,48 @@ def _update_dayparting(page: Page, dayparting_value: str):
 # Main update orchestrator
 # ═══════════════════════════════════════════════════════════════════
 
+def _apply_page5_fields(page: Page, fields: dict):
+    """Apply changed fields on page 5 (ad settings — ad rotation)."""
+    ad_rotation = fields.get("ad_rotation", "")
+    autopilot_method = fields.get("autopilot_method", "")
+
+    if ad_rotation == "manual":
+        # Click Manual label
+        page.evaluate('''() => {
+            const label = document.querySelector('label[data-ad-rotation-trackers="manual"]');
+            if (label) label.click();
+        }''')
+        time.sleep(0.5)
+        logger.info("  Ad rotation: manual")
+
+    elif ad_rotation == "autopilot":
+        # Click Autopilot label
+        page.evaluate('''() => {
+            const label = document.querySelector('label[data-ad-rotation-trackers="autopilot"]');
+            if (label) label.click();
+        }''')
+        time.sleep(0.5)
+
+        # Select method (ctr, cpa, epc)
+        if autopilot_method:
+            method_id = f"ad_rotation_autopilot_{autopilot_method}"
+            page.evaluate(f'''() => {{
+                const label = document.querySelector('label[for="{method_id}"]');
+                if (label) label.click();
+                const radio = document.getElementById("{method_id}");
+                if (radio) {{ radio.checked = true; radio.dispatchEvent(new Event("change", {{bubbles: true}})); }}
+            }}''')
+            time.sleep(0.3)
+
+        logger.info(f"  Ad rotation: autopilot ({autopilot_method or 'default'})")
+
+
 PAGE_APPLIERS = {
     1: _apply_page1_fields,
     2: _apply_page2_fields,
     3: _apply_page3_fields,
     4: _apply_page4_fields,
+    5: _apply_page5_fields,
 }
 
 
