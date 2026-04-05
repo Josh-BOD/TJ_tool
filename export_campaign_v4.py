@@ -896,6 +896,62 @@ def read_page4(page: Page, campaign_id: str) -> dict:
 #   Reads all ads via jQuery DataTables API
 # ═══════════════════════════════════════════════════════════════════
 
+def read_ad_rotation(page: Page) -> dict:
+    """Read ad rotation settings from the ad-settings page."""
+    d = {"ad_rotation": "", "autopilot_method": ""}
+    try:
+        # Check which rotation mode is active
+        rotation = page.evaluate('''() => {
+            // Check the radio/label for rotation mode
+            const manual = document.querySelector('input[name="ad_rotation"][value="manual"], #ad_rotation_manual');
+            const autopilot = document.querySelector('input[name="ad_rotation"][value="autopilot"], label[data-ad-rotation-trackers="autopilot"]');
+
+            // Also check from the page header text
+            const headerText = document.body.innerText;
+            const rotationMatch = headerText.match(/Ad Rotation:\\s*(.*?)(?:\\n|$)/);
+
+            // Check active radio/label
+            const activeLabel = document.querySelector('label.active[data-ad-rotation-trackers]');
+            const mode = activeLabel ? activeLabel.getAttribute('data-ad-rotation-trackers') : '';
+
+            // Check autopilot method
+            const ctrChecked = document.querySelector('#ad_rotation_autopilot_ctr')?.checked;
+            const cpaChecked = document.querySelector('#ad_rotation_autopilot_cpa')?.checked;
+            const epcChecked = document.querySelector('#ad_rotation_autopilot_epc')?.checked;
+
+            let method = '';
+            if (ctrChecked) method = 'ctr';
+            else if (cpaChecked) method = 'cpa';
+            else if (epcChecked) method = 'epc';
+
+            return {
+                mode: mode || (manual?.checked ? 'manual' : ''),
+                method: method,
+                headerText: rotationMatch ? rotationMatch[1].trim() : '',
+            };
+        }''')
+
+        d["ad_rotation"] = rotation.get("mode", "") or ("autopilot" if "Autopilot" in rotation.get("headerText", "") else "manual" if "Manual" in rotation.get("headerText", "") else "")
+        d["autopilot_method"] = rotation.get("method", "")
+
+        if not d["ad_rotation"] and rotation.get("headerText"):
+            header = rotation["headerText"]
+            if "Autopilot" in header:
+                d["ad_rotation"] = "autopilot"
+                if "CTR" in header: d["autopilot_method"] = "ctr"
+                elif "CPA" in header: d["autopilot_method"] = "cpa"
+                elif "EPC" in header: d["autopilot_method"] = "epc"
+            elif "Manual" in header:
+                d["ad_rotation"] = "manual"
+
+        if d["ad_rotation"]:
+            logger.info(f"  Ad rotation: {d['ad_rotation']}" + (f" ({d['autopilot_method']})" if d["autopilot_method"] else ""))
+    except Exception as e:
+        logger.warning(f"  Could not read ad rotation: {e}")
+
+    return d
+
+
 def read_ads(page: Page, campaign_id: str) -> list:
     """Read all ads from the ad-settings page via DataTables API."""
     url = f"{BASE_URL}/campaign/{campaign_id}/ad-settings"
