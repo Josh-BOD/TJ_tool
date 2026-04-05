@@ -771,6 +771,26 @@ def read_page3(page: Page, campaign_id: str) -> dict:
     })()""")
     d["_bid_type_detected"] = "CPA" if cpa_visible else "CPM"
 
+    # ── Target Sources (Manual vs Automatic) ────────────────────
+    source_mode = _read_checked_radio(page, "is_manual_source_selection")
+    if source_mode == "manually":
+        d["source_selection"] = "manual"
+    elif source_mode == "automatically":
+        d["source_selection"] = "automatic"
+    else:
+        # Fallback: check if the manually radio exists and is checked
+        d["source_selection"] = _js_str(page, '''
+            (() => {
+                const manual = document.querySelector('#is_manual_source_selection_manually');
+                const auto = document.querySelector('#is_manual_source_selection_automatically');
+                if (manual && manual.checked) return "manual";
+                if (auto && auto.checked) return "automatic";
+                return "";
+            })()
+        ''')
+    if d["source_selection"]:
+        logger.info(f"  Target Sources: {d['source_selection']}")
+
     # ── Smart Bidder ──────────────────────────────────────────────
     d["smart_bidder"] = ""
     d["optimization_option"] = ""
