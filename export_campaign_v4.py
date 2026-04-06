@@ -1158,7 +1158,7 @@ def build_csv_row(p1: dict, p2: dict, p3: dict, p4: dict) -> dict:
     row["geo_name"] = ""
     row["test_number"] = ""
     row["cpm_adjust"] = ""
-    row["source_selection"] = ""
+    row["source_selection"] = p3.get("source_selection", "")
     row["include_all_sources"] = "TRUE"
     row["automation_rules"] = ""
 

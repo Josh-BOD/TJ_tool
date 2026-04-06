@@ -11,7 +11,7 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from export_campaign_v4 import read_overview, read_page1, read_page2, read_page3, read_page4, read_ads, build_csv_row
+from export_campaign_v4 import read_overview, read_page1, read_page2, read_page3, read_page4, read_ads, read_ad_rotation, build_csv_row
 
 logger = logging.getLogger(__name__)
 
@@ -71,10 +71,15 @@ def scrape_campaign(page: Page, campaign_id: str) -> dict:
         fields["frequency_cap_every"] = overview.get("frequency_cap_every", "24")
         logger.info(f"  Freq cap (from overview): {fields['frequency_cap']} times / {fields['frequency_cap_every']}h")
 
-    # ── Step 6: Read ads ──────────────────────────────────────────
+    # ── Step 6: Read ads + ad rotation ──────────────────────────────
     logger.info(f"Collecting ads for campaign {campaign_id}")
     ads = read_ads(page, campaign_id)
     logger.info(f"Found {len(ads)} ads")
+
+    # Read ad rotation (on the same page 5)
+    rotation = read_ad_rotation(page)
+    fields["ad_rotation"] = rotation.get("ad_rotation", "")
+    fields["autopilot_method"] = rotation.get("autopilot_method", "")
 
     return {"fields": fields, "ads": ads}
 
