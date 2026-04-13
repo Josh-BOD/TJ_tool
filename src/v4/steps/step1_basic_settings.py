@@ -20,6 +20,7 @@ AD_TYPE_MAP = {"static_banner": "1", "video_banner": "2", "video_file": "5", "ro
 DIMENSION_MAP = {
     "300x250": "9", "950x250": "5", "468x60": "25", "305x99": "55",
     "300x100": "80", "970x90": "221", "320x480": "9771", "640x360": "9731",
+    "9:16": "9781",  # Shorties In-Stream 9:16
 }
 GENDER_MAP = {"all": "1", "male": "2", "female": "3"}
 
@@ -195,7 +196,21 @@ def _set_labels(page: Page, labels: list):
         if removed:
             logger.info(f"    Removed {removed} existing label(s)")
 
-        labels_input = page.locator('input.select2-search__field[placeholder="Select or Input a Label"]')
+        # Try multiple selectors for the label input
+        labels_input = None
+        for selector in [
+            'input.select2-search__field[placeholder="Select or Input a Label"]',
+            '#selectLabel + .select2-container input.select2-search__field',
+            'span[aria-labelledby="select2-selectLabel-container"]',
+            '.select2-container--below input.select2-search__field',
+        ]:
+            loc = page.locator(selector)
+            if loc.count() > 0:
+                labels_input = loc.first
+                break
+        if not labels_input:
+            logger.warning("    Label input not found")
+            return
         labels_input.click()
         time.sleep(0.5)
 

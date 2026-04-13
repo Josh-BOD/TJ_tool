@@ -9,6 +9,7 @@ class V4CampaignConfig:
     """Complete campaign configuration covering all ~63 CSV columns."""
 
     # ── Core ──────────────────────────────────────────────────────
+    template_campaign_id: str = ""     # TJ campaign ID to clone from (inherits bids/sources)
     enabled: bool = True
     group: str = ""
     keywords: List[str] = field(default_factory=list)
@@ -33,6 +34,7 @@ class V4CampaignConfig:
     exchange_id: str = ""
     geo_name: str = ""
     test_number: str = ""
+    keyword_name: str = ""             # Override for campaign naming (e.g. "KEY-Hentai", "INT-AI")
 
     # ── Step 2: Toggle-Gated Targeting ────────────────────────────
     # OS targeting
@@ -83,6 +85,9 @@ class V4CampaignConfig:
     per_source_test_budget: float = 5.00
     max_bid: float = 0.30
     cpm_adjust: Optional[float] = None # percentage adjustment to suggested CPM
+    cpm_bid_mode: str = ""             # "suggested" (default), "min", or "static"
+    cpm_bid_value: Optional[float] = None  # percentage for suggested/min, dollar amount for static
+    cpm_flat_add: Optional[float] = None   # flat dollar amount to add on top of min CPM
     include_all_sources: bool = True
     automation_rules: str = ""         # JSON or named rule preset
 
@@ -92,11 +97,14 @@ class V4CampaignConfig:
     schedule_dayparting: str = ""      # JSON dayparting config
     frequency_cap: int = 3
     frequency_cap_every: int = 24      # hours
+    budget_type: str = "custom"        # "custom" or "unlimited"
     daily_budget: float = 25.00
 
     # ── Derived helpers ───────────────────────────────────────────
     @property
     def primary_keyword(self) -> str:
+        if self.keyword_name:
+            return self.keyword_name
         return self.keywords[0] if self.keywords else "Broad"
 
     @property

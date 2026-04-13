@@ -25,7 +25,7 @@ from collections import deque
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
-from worker_server.models import CreateJobRequest, JobResponse, HealthResponse, AdCsvListResponse
+from worker_server.models import CreateJobRequest, JobResponse, HealthResponse, AdCsvListResponse, VerifyRequest
 
 app = FastAPI(title="Campaign Builder Worker")
 
@@ -99,7 +99,7 @@ def _extract_multilingual_params(csv_content: str) -> dict:
     return {"ad_format": "NATIVE", "group": "i18n"}
 
 
-def _build_command(csv_path: str, csv_content: str, dry_run: bool, flow: str | None = None) -> tuple[list[str], str, str]:
+def _build_command(csv_path: str, csv_content: str, dry_run: bool, flow: str | None = None, name_prefix: str = "") -> tuple[list[str], str, str]:
     """Build the command to run based on CSV format.
 
     Returns (command, flow_used, flow_source) where flow_source is 'explicit' or 'auto-detected'.
@@ -132,6 +132,8 @@ def _build_command(csv_path: str, csv_content: str, dry_run: bool, flow: str | N
             ]
     elif fmt == "v4":
         cmd = [sys.executable, str(V4_SCRIPT), csv_path, "--live"]
+        if name_prefix:
+            cmd.extend(["--prefix", name_prefix])
         if dry_run:
             cmd.append("--dry-run")
     elif fmt == "template":
@@ -250,9 +252,9 @@ def _parse_log_file(log_path: Path) -> tuple[list[str], list[str], int]:
 # SINGLE-PROCESS JOB (original behavior, used for workers=1 or dry_run)
 # ============================================================================
 
-def _run_job_single(job_id: str, csv_path: str, csv_content: str, dry_run: bool, flow: str | None = None):
+def _run_job_single(job_id: str, csv_path: str, csv_content: str, dry_run: bool, flow: str | None = None, name_prefix: str = ""):
     """Run campaign creation in a single subprocess (background thread)."""
-    cmd, flow_used, flow_source = _build_command(csv_path, csv_content, dry_run, flow)
+    cmd, flow_used, flow_source = _build_command(csv_path, csv_content, dry_run, flow, name_prefix)
 
     with job_lock:
         jobs[job_id]["status"] = "running"
@@ -314,9 +316,9 @@ def _run_job_single(job_id: str, csv_path: str, csv_content: str, dry_run: bool,
 # ============================================================================
 
 def _run_job_parallel(job_id: str, csv_path: str, csv_content: str, dry_run: bool,
-                      flow: str | None, num_workers: int):
+                      flow: str | None, num_workers: int, name_prefix: str = ""):
     """Run campaign creation across multiple parallel browser workers."""
-    _, flow_used, flow_source = _build_command(csv_path, csv_content, dry_run, flow)
+    _, flow_used, flow_source = _build_command(csv_path, csv_content, dry_run, flow, name_prefix)
     actual_flow = flow_used
 
     with job_lock:
@@ -436,6 +438,8 @@ def _run_job_parallel(job_id: str, csv_path: str, csv_content: str, dry_run: boo
                     cmd.append("--dry-run")
             elif actual_flow == "v4":
                 cmd = [sys.executable, str(V4_SCRIPT), str(chunk_csv), "--live"]
+                if name_prefix:
+                    cmd.extend(["--prefix", name_prefix])
                 if dry_run:
                     cmd.append("--dry-run")
             elif actual_flow == "template":
@@ -678,10 +682,10 @@ def create_job(req: CreateJobRequest):
     # Choose single or parallel execution
     if num_workers <= 1 or req.dry_run:
         target = _run_job_single
-        args = (job_id, str(csv_path), req.csv_content, req.dry_run, req.flow)
+        args = (job_id, str(csv_path), req.csv_content, req.dry_run, req.flow, req.name_prefix)
     else:
         target = _run_job_parallel
-        args = (job_id, str(csv_path), req.csv_content, req.dry_run, req.flow, num_workers)
+        args = (job_id, str(csv_path), req.csv_content, req.dry_run, req.flow, num_workers, req.name_prefix)
 
     thread = threading.Thread(target=target, args=args, daemon=True)
     thread.start()
@@ -736,3 +740,44 @@ def cancel_job(job_id: str):
             jobs[job_id]["status"] = "cancelled"
         return {"message": f"Job cancelled ({terminated} process(es) terminated)"}
     return {"message": "Job is not running"}
+
+
+# ── Post-Creation Verification ────────────────────────────────
+
+@app.post("/verify")
+def verify_campaigns_endpoint(req: VerifyRequest):
+    """Run post-creation verification against live TJ campaigns."""
+    import tempfile
+
+    csv_path = Path(tempfile.mktemp(suffix=".csv", prefix="verify_"))
+    csv_path.write_text(req.csv_content)
+
+    ids_str = ",".join(req.campaign_ids)
+    verify_script = Path(__file__).parent / "verify_campaigns.py"
+
+    if not verify_script.exists():
+        csv_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail=f"verify_campaigns.py not found")
+
+    verify_id = f"verify_{req.job_id or 'manual'}_{int(time.time())}"
+    log_path = Path(f"/tmp/{verify_id}.log")
+
+    def _run_verify():
+        try:
+            result = subprocess.run(
+                [sys.executable, str(verify_script), str(csv_path), "--ids", ids_str],
+                capture_output=True, text=True, timeout=600,
+                cwd=str(verify_script.parent),
+            )
+            log_path.write_text(
+                f"STDOUT:\n{result.stdout}\n\nSTDERR:\n{result.stderr}\n\nEXIT: {result.returncode}"
+            )
+        except Exception as e:
+            log_path.write_text(f"ERROR: {e}")
+        finally:
+            csv_path.unlink(missing_ok=True)
+
+    thread = threading.Thread(target=_run_verify, daemon=True)
+    thread.start()
+
+    return {"verify_job_id": verify_id, "log_path": str(log_path)}

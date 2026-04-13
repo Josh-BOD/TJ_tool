@@ -121,6 +121,15 @@ def dismiss_modals(page: Page):
                 const btn = open.querySelector(".close, [data-dismiss='modal']");
                 if (btn) btn.click();
             }
+            // Dismiss customAlertBox (TJ custom alerts like AUTOMATE BIDDING?)
+            const alertBg = document.querySelector(".customAlertBoxBG");
+            if (alertBg) {
+                const okBtn = document.querySelector(".customAlertBox .smallButton.greenButton, .customAlertBox .smallButton");
+                if (okBtn) okBtn.click();
+                alertBg.remove();
+                const alertBox = document.querySelector(".customAlertBox");
+                if (alertBox) alertBox.remove();
+            }
             // Remove backdrop
             document.querySelectorAll(".modal-backdrop").forEach(el => el.remove());
             document.body.classList.remove("modal-open");

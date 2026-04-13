@@ -427,38 +427,128 @@ class NativeUploader:
             logger.debug(f"Create preview step for Native ads: {e}")
             return True  # Not critical if button doesn't exist
     
+    def _dismiss_csv_preview_modal(self, page: Page) -> bool:
+        """
+        Handle the #csvPreviewModal that appears after clicking "Create CSV Preview".
+
+        TJ shows a modal dialog with a confirm button. The original
+        button.create-ads-from-csv-button is hidden (d-none) while the modal
+        is open, so we must click the button inside the modal instead.
+
+        Returns True if the modal was found and the confirm button clicked,
+        False if no modal was present.
+        """
+        try:
+            # Check if the modal is open (Bootstrap adds class "in" or "show")
+            modal_visible = page.evaluate("""() => {
+                const modal = document.querySelector('#csvPreviewModal');
+                if (!modal) return false;
+                const style = window.getComputedStyle(modal);
+                return (
+                    modal.classList.contains('in') ||
+                    modal.classList.contains('show') ||
+                    style.display !== 'none'
+                );
+            }""")
+
+            if not modal_visible:
+                logger.debug("csvPreviewModal not visible — skipping modal handling")
+                return False
+
+            logger.info("csvPreviewModal detected — looking for confirm button inside modal...")
+
+            # Try candidate selectors in order of specificity
+            confirm_selectors = [
+                "#csvPreviewModal button.confirmAds",
+                "#csvPreviewModal button.greenButton",
+                "#csvPreviewModal .btn-success",
+                "#csvPreviewModal .btn-primary",
+            ]
+            for sel in confirm_selectors:
+                try:
+                    btn = page.locator(sel).first
+                    if btn.is_visible(timeout=1500):
+                        logger.info(f"Clicking modal confirm button: {sel}")
+                        btn.click()
+                        # Wait for modal to close
+                        page.wait_for_selector("#csvPreviewModal", state="hidden", timeout=8000)
+                        logger.info("✓ csvPreviewModal closed after clicking confirm button")
+                        return True
+                except Exception:
+                    continue
+
+            # Fallback: find any button whose text contains "Create" inside the modal
+            try:
+                clicked = page.evaluate("""() => {
+                    const modal = document.querySelector('#csvPreviewModal');
+                    if (!modal) return false;
+                    const buttons = modal.querySelectorAll('button');
+                    for (const btn of buttons) {
+                        if (btn.textContent && btn.textContent.toLowerCase().includes('create')) {
+                            btn.click();
+                            return true;
+                        }
+                    }
+                    return false;
+                }""")
+                if clicked:
+                    page.wait_for_selector("#csvPreviewModal", state="hidden", timeout=8000)
+                    logger.info("✓ csvPreviewModal closed via JS text-match fallback")
+                    return True
+            except Exception as js_err:
+                logger.debug(f"JS modal fallback error: {js_err}")
+
+            logger.warning("Could not find a confirm button inside csvPreviewModal")
+            return False
+
+        except Exception as e:
+            logger.warning(f"Error handling csvPreviewModal: {e}")
+            return False
+
     def _click_create_ads(self, page: Page) -> bool:
-        """Click 'Create ad(s)' button."""
+        """Click 'Create ad(s)' button, handling the csvPreviewModal if visible."""
         try:
             logger.info("Looking for 'Create ad(s)' button for Native ads...")
-            
-            # Find the create ads button by class
+
+            # Step 1: Check whether TJ has opened the csvPreviewModal.
+            # When the modal is open, button.create-ads-from-csv-button carries
+            # class "d-none" and is not interactable, so we must click the
+            # confirm button inside the modal first.
+            modal_handled = self._dismiss_csv_preview_modal(page)
+
+            if modal_handled:
+                # Modal was present and its confirm button was clicked.
+                # Give TJ a moment to process the submission.
+                logger.info("Modal handled — waiting for Native ads to process...")
+                page.wait_for_timeout(2000)
+                logger.info("✓ Create Native ads triggered via csvPreviewModal")
+                return True
+
+            # Step 2: No modal — fall back to the original button.
+            logger.info("No csvPreviewModal found — using button.create-ads-from-csv-button...")
             create_btn = page.locator('button.create-ads-from-csv-button')
-            
-            # Wait for button to be visible
+
+            # Wait for button to be visible (it may still be loading)
             logger.info("Waiting for Native ads button to be visible...")
             create_btn.wait_for(state='visible', timeout=10000)
-            
-            # Scroll the button into view
+
+            # Scroll into view and click
             logger.info("Scrolling Native ads button into view...")
             create_btn.scroll_into_view_if_needed()
-            
-            # Wait a moment for any animations
             page.wait_for_timeout(1000)
-            
-            # Click the button
+
             logger.info("Clicking 'Create ad(s)' button for Native ads...")
             create_btn.click(timeout=10000)
-            
+
             logger.info("✓ Create Native ads button clicked")
             return True
+
         except Exception as e:
             logger.error(f"Failed to click create Native ads button: {e}")
-            # Try to get a screenshot for debugging
             try:
                 page.screenshot(path='./screenshots/native_create_ads_error.png')
                 logger.error("Screenshot saved to: ./screenshots/native_create_ads_error.png")
-            except:
+            except Exception:
                 pass
             return False
     

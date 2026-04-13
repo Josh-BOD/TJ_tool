@@ -10,6 +10,7 @@ class CreateJobRequest(BaseModel):
     filename: str = "campaign_builder_input.csv"
     flow: Optional[str] = None  # "multilingual", "standard", "template", "v4", "shorts", or None for auto-detect
     workers: int = 4  # 1-4 parallel browser workers
+    name_prefix: str = ""
 
 
 class JobResponse(BaseModel):
@@ -32,3 +33,9 @@ class HealthResponse(BaseModel):
 
 class AdCsvListResponse(BaseModel):
     csv_files: dict[str, list[str]]
+
+
+class VerifyRequest(BaseModel):
+    csv_content: str
+    campaign_ids: list[str]
+    job_id: str = ""

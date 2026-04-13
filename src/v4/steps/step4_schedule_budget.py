@@ -121,24 +121,12 @@ def _configure_frequency_cap(page: Page, config: V4CampaignConfig):
 
 
 def _configure_budget(page: Page, config: V4CampaignConfig):
-    """Select Custom budget radio and fill daily budget."""
-    # Click Custom radio via JS (same pattern as V2/V3)
-    page.evaluate('''() => {
-        const input = document.getElementById("is_unlimited_budget_custom");
-        if (input) {
-            input.checked = true;
-            input.click();
-            input.dispatchEvent(new Event("change", {bubbles: true}));
-            input.dispatchEvent(new Event("input", {bubbles: true}));
-        }
-        if (typeof $ !== "undefined") {
-            try { $("#is_unlimited_budget_custom").prop("checked", true)
-                    .trigger("click").trigger("change"); } catch(e) {}
-        }
-        const label = document.querySelector('label[for="is_unlimited_budget_custom"]');
-        if (label) label.click();
-    }''')
-    time.sleep(1)
+    """Select budget type (unlimited or custom) and fill daily budget if custom."""
+    if config.budget_type == "unlimited":
+        _select_unlimited_budget(page)
+        return
+
+    _select_custom_budget(page)
 
     # Wait for budget field to appear
     for attempt in range(3):
@@ -187,3 +175,60 @@ def _configure_budget(page: Page, config: V4CampaignConfig):
             logger.info(f"    Daily budget: ${config.daily_budget} (fallback)")
         except Exception:
             logger.warning("    Could not set daily budget — template value will be used")
+
+
+def _select_unlimited_budget(page: Page):
+    """Select the Unlimited budget radio button."""
+    page.evaluate('''() => {
+        // Try the unlimited radio (opposite of custom)
+        const input = document.getElementById("is_unlimited_budget_unlimited")
+            || document.getElementById("is_unlimited_budget");
+        if (input) {
+            input.checked = true;
+            input.click();
+            input.dispatchEvent(new Event("change", {bubbles: true}));
+        }
+        if (typeof $ !== "undefined") {
+            try {
+                $("#is_unlimited_budget_unlimited, #is_unlimited_budget")
+                    .prop("checked", true).trigger("click").trigger("change");
+            } catch(e) {}
+        }
+        // Try clicking label
+        const label = document.querySelector(
+            'label[for="is_unlimited_budget_unlimited"], label[for="is_unlimited_budget"]'
+        );
+        if (label) label.click();
+        // Fallback: find radio by value
+        const radios = document.querySelectorAll('input[name="is_unlimited_budget"]');
+        for (const r of radios) {
+            if (r.value === "1" || r.id.includes("unlimited") && !r.id.includes("custom")) {
+                r.checked = true;
+                r.click();
+                r.dispatchEvent(new Event("change", {bubbles: true}));
+                break;
+            }
+        }
+    }''')
+    time.sleep(1)
+    logger.info("    Budget: unlimited")
+
+
+def _select_custom_budget(page: Page):
+    """Select the Custom budget radio button."""
+    page.evaluate('''() => {
+        const input = document.getElementById("is_unlimited_budget_custom");
+        if (input) {
+            input.checked = true;
+            input.click();
+            input.dispatchEvent(new Event("change", {bubbles: true}));
+            input.dispatchEvent(new Event("input", {bubbles: true}));
+        }
+        if (typeof $ !== "undefined") {
+            try { $("#is_unlimited_budget_custom").prop("checked", true)
+                    .trigger("click").trigger("change"); } catch(e) {}
+        }
+        const label = document.querySelector('label[for="is_unlimited_budget_custom"]');
+        if (label) label.click();
+    }''')
+    time.sleep(1)

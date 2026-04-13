@@ -332,7 +332,10 @@ def run_v4(csv_path: Path, dry_run: bool = False, headless: bool = False, slow_m
 
             for variant in config.variants:
                 try:
-                    cid, cname = creator.create_campaign(config, variant, csv_dir)
+                    if config.template_campaign_id:
+                        cid, cname = creator.clone_from_template(config, variant, csv_dir)
+                    else:
+                        cid, cname = creator.create_campaign(config, variant, csv_dir)
                     results.append((cid, cname, variant, "Created"))
                     total_created += 1
                 except (V4CreationError, Exception) as e:
@@ -356,7 +359,10 @@ def run_v4(csv_path: Path, dry_run: bool = False, headless: bool = False, slow_m
                                 break
                             creator = V4CampaignCreator(page, name_prefix=name_prefix)
                             try:
-                                cid, cname = creator.create_campaign(config, variant, csv_dir)
+                                if config.template_campaign_id:
+                                    cid, cname = creator.clone_from_template(config, variant, csv_dir)
+                                else:
+                                    cid, cname = creator.create_campaign(config, variant, csv_dir)
                                 results.append((cid, cname, variant, "Created"))
                                 total_created += 1
                                 continue

@@ -41,10 +41,15 @@ def _int(val: str, default: int) -> int:
 
 
 def _list(val: str, sep: str = ",") -> List[str]:
-    """Split a string into a trimmed list; return [] for empty."""
+    """Split a string into a trimmed list; return [] for empty.
+
+    Auto-detects semicolon separator if present (for geo fields that go through JSON dispatch).
+    """
     if not val or not val.strip():
         return []
-    return [item.strip() for item in val.split(sep) if item.strip()]
+    # Use semicolon if present, otherwise comma
+    actual_sep = ";" if ";" in val else sep
+    return [item.strip() for item in val.split(actual_sep) if item.strip()]
 
 
 def _optional_float(val: str):
@@ -80,6 +85,7 @@ def _row_to_config(row: dict, row_num: int) -> V4CampaignConfig:
     )
 
     return V4CampaignConfig(
+        template_campaign_id=g("template_campaign_id"),
         enabled=_bool(g("enabled", "TRUE")),
         group=group,
         keywords=_list(g("keywords")),
@@ -104,6 +110,7 @@ def _row_to_config(row: dict, row_num: int) -> V4CampaignConfig:
         exchange_id=g("exchange_id"),
         geo_name=g("geo_name"),
         test_number=g("test_number"),
+        keyword_name=g("keyword_name"),
 
         # Step 2 — toggle-gated targeting
         os_include=g("os_include"),
@@ -135,6 +142,9 @@ def _row_to_config(row: dict, row_num: int) -> V4CampaignConfig:
         per_source_test_budget=_float(g("per_source_test_budget"), 5.00),
         max_bid=_float(g("max_bid"), 0.30),
         cpm_adjust=_optional_float(g("cpm_adjust")),
+        cpm_bid_mode=g("cpm_bid_mode", "").lower(),
+        cpm_bid_value=_optional_float(g("cpm_bid_value")),
+        cpm_flat_add=_optional_float(g("cpm_flat_add")),
         include_all_sources=_bool(g("include_all_sources", "TRUE")),
         automation_rules=g("automation_rules"),
 
@@ -144,6 +154,7 @@ def _row_to_config(row: dict, row_num: int) -> V4CampaignConfig:
         schedule_dayparting=g("schedule_dayparting"),
         frequency_cap=_int(g("frequency_cap"), 3),
         frequency_cap_every=_int(g("frequency_cap_every"), 24),
+        budget_type=g("budget_type", "custom").lower(),
         daily_budget=_float(g("daily_budget"), 25.00),
     )
 
