@@ -218,44 +218,62 @@ class CampaignCreator:
     # =========================================================================
     
     def _clone_campaign(self, template_id: str) -> str:
-        """Clone a campaign and return new campaign ID."""
-        # Navigate to campaigns page first
-        self.page.goto(f"{self.BASE_URL}/campaigns")
-        self.page.wait_for_load_state("networkidle")
-        
-        # Use the "All Campaigns" searchbox to filter by ID
-        searchbox = self.page.locator('input.select2-search__field[placeholder="All Campaigns"]')
-        searchbox.fill(template_id)
+        """Clone a campaign and return new campaign ID.
+
+        Updated flow (TJ UI 2026):
+        1. Navigate to campaigns page
+        2. Click "Filters" button to open side panel
+        3. Search for campaign in select#campaign select2
+        4. Hover over the campaign row → click inline clone icon
+        5. Extract new campaign ID from redirect URL
+        """
+        # Navigate to campaigns page
+        self.page.goto(f"{self.BASE_URL}/campaigns", wait_until='domcontentloaded', timeout=15000)
+        time.sleep(2)
+
+        # Open the Filters side panel
+        filters_btn = self.page.locator('button.toggleCampaignsFilter')
+        filters_btn.click(timeout=5000)
         time.sleep(1)
-        
+
+        # Use the campaign select2 to search by template ID
+        campaign_select = self.page.locator('#campaign + .select2-container, span[aria-labelledby="select2-campaign-container"]')
+        campaign_select.click(timeout=5000)
+        time.sleep(0.5)
+
+        search_input = self.page.locator('.select2-container--open .select2-search__field')
+        search_input.fill(template_id)
+        time.sleep(2)
+
         # Click on the dropdown result
-        self.page.click('li.select2-results__option')
+        self.page.locator('li.select2-results__option').first.click(timeout=5000)
         time.sleep(0.5)
-        
-        # Click "Apply Filters" button (as per your workflow doc)
-        apply_filters_btn = self.page.query_selector('button:has-text("Apply Filters")')
-        if apply_filters_btn:
-            apply_filters_btn.click()
-            time.sleep(1)
-        
-        # Select the campaign checkbox
-        checkbox_selector = f'input[type="checkbox"][value="{template_id}"]'
-        self.page.click(checkbox_selector)
+
+        # Click "Apply" button
+        self.page.locator('button#applyFilters').click(timeout=5000)
+        time.sleep(3)
+
+        # Hover over the campaign row to reveal the clone icon, then click it
+        campaign_row = self.page.locator(f'tr:has(i.campaignIconAction.clone[data-campaign-id="{template_id}"])').first
+        if campaign_row.count() == 0:
+            campaign_row = self.page.locator('tr:has(i.campaignIconAction.clone)').first
+
+        campaign_row.hover(timeout=5000)
         time.sleep(0.5)
-        
-        # Now the clone button should be visible in the action toolbar
-        # It's a button with a copy icon, not an <a> tag
-        # Wait for it to be visible and click it
-        self.page.wait_for_selector('button:has(i.fa-copy)', state='visible', timeout=5000)
-        self.page.click('button:has(i.fa-copy)')
+
+        clone_icon = self.page.locator(f'i.campaignIconAction.clone[data-campaign-id="{template_id}"]')
+        if clone_icon.count() == 0:
+            clone_icon = self.page.locator('i.campaignIconAction.clone[data-action="clone"]').first
+
+        clone_icon.first.click(force=True, timeout=5000)
         time.sleep(1)
-        
+
         # Wait for redirect to new campaign page
-        self.page.wait_for_url(f"{self.BASE_URL}/campaign/*")
-        
+        self.page.wait_for_url(f"{self.BASE_URL}/campaign/**", timeout=15000)
+
         # Extract campaign ID from URL
-        campaign_id = self.page.url.split("/campaign/")[1].split("?")[0]
-        
+        campaign_id = self.page.url.split("/campaign/")[1].split("?")[0].split("/")[0]
+
         return campaign_id
     
     def _configure_basic_settings(

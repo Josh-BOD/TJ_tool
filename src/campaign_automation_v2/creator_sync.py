@@ -9,7 +9,7 @@ import time
 import logging
 from pathlib import Path
 from typing import Optional, Tuple, List
-from playwright.sync_api import Page, Browser, BrowserContext
+from playwright.sync_api import Page, Browser, BrowserContext, TimeoutError as PlaywrightTimeout
 
 from .models import CampaignDefinition, Keyword, MatchType
 
@@ -88,23 +88,27 @@ class CampaignCreator:
         """
         template_id = self.templates["desktop"]["id"]
         keyword = campaign.primary_keyword if campaign.keywords else "Broad"
-        
-        # Generate campaign name with all geos
-        campaign_name = generate_campaign_name(
-            geo=campaign.geo,  # Pass full geo list for multi-geo naming
-            language=campaign.settings.language,
-            ad_format=self.ad_format,  # Use the format passed to creator
-            bid_type=campaign.settings.bid_type,  # Use campaign's bid type
-            source=DEFAULT_SETTINGS["source"],
-            keyword=keyword,
-            device="desktop",
-            gender=campaign.settings.gender,
-            test_number=campaign.test_number,
-            campaign_type=campaign.settings.campaign_type,
-            geo_name=campaign.settings.geo_name,
-            content_category=self.content_category
-        )
-        
+
+        # Use name override if provided, otherwise auto-generate
+        if campaign.campaign_name_override:
+            # Replace device suffix for desktop variant
+            campaign_name = campaign.campaign_name_override.replace("_iOS_", "_DESK_").replace("_AND_", "_DESK_")
+        else:
+            campaign_name = generate_campaign_name(
+                geo=campaign.geo,
+                language=campaign.settings.language,
+                ad_format=self.ad_format,
+                bid_type=campaign.settings.bid_type,
+                source=DEFAULT_SETTINGS["source"],
+                keyword=keyword,
+                device="desktop",
+                gender=campaign.settings.gender,
+                test_number=campaign.test_number,
+                campaign_type=campaign.settings.campaign_type,
+                geo_name=campaign.settings.geo_name,
+                content_category=self.content_category
+            )
+
         campaign_id = None
         try:
             # Navigate to campaigns page
@@ -119,27 +123,36 @@ class CampaignCreator:
             self._configure_geo(campaign.geo)  # Pass full geo list
             self._set_browser_language(campaign.settings.language)
 
-            # Configure keywords only if there are any (optional for remarketing)
-            if campaign.keywords:
-                self._configure_keywords(campaign.keywords)
-            else:
-                # Just save and continue past the keywords step
-                self._click_save_and_continue()
+            # Configure keywords, negative keywords, interests, and negative interests
+            self._configure_keyword_page(campaign)
 
-            self._configure_tracking_and_bids(campaign)
-            self._configure_schedule_and_budget(campaign)
-
-            # Only delete inherited ads if a CSV will replace them
-            # For SHORTS/template-only campaigns, keep the template's ads
             if self.keep_ads:
-                logger.info("  Keeping template ads (--keep-ads flag, shorts flow)")
-            elif campaign.csv_file:
-                self._delete_all_ads()
+                # SHORTS flow: save audience page and stop (tracking/budget inherited from template)
+                logger.info("  SHORTS: saving audience page — tracking/budget inherited from template")
+                # No need for Save & Continue to tracking — the audience save is enough
+                # The campaign is ready as a clone with template bids/budget/ads
+                logger.info(f"  ✓ SHORTS campaign configured: {campaign_name} (ID: {campaign_id})")
             else:
-                logger.info("  Keeping template ads (no csv_file — template-only campaign)")
+                self._configure_tracking_and_bids(campaign)
+                self._configure_schedule_and_budget(campaign)
 
-            # Configure ad rotation to Autopilot (CTR)
-            self._configure_ad_rotation("autopilot", "ctr")
+                if campaign.csv_file:
+                    self._delete_all_ads()
+                else:
+                    logger.info("  Keeping template ads (no csv_file — template-only campaign)")
+
+                self._configure_ad_rotation("autopilot", "ctr")
+
+            # Pause the campaign (user requested all created as paused)
+            try:
+                self.page.evaluate('''() => {
+                    // Look for pause/disable toggle on current page
+                    const toggle = document.querySelector('input[name="enabled"], input[name="status"]');
+                    if (toggle && toggle.checked) { toggle.click(); return "paused"; }
+                    return "no_toggle";
+                }''')
+            except Exception:
+                pass
 
             return campaign_id, campaign_name
 
@@ -165,23 +178,27 @@ class CampaignCreator:
         """
         template_id = self.templates["ios"]["id"]
         keyword = campaign.primary_keyword if campaign.keywords else "Broad"
-        
-        campaign_name = generate_campaign_name(
-            geo=campaign.geo,  # Pass full geo list for multi-geo naming
-            language=campaign.settings.language,
-            ad_format=self.ad_format,  # Use the format passed to creator
-            bid_type=campaign.settings.bid_type,  # Use campaign's bid type
-            source=DEFAULT_SETTINGS["source"],
-            keyword=keyword,
-            device="ios",
-            gender=campaign.settings.gender,
-            mobile_combined=campaign.mobile_combined,
-            test_number=campaign.test_number,
-            campaign_type=campaign.settings.campaign_type,
-            geo_name=campaign.settings.geo_name,
-            content_category=self.content_category
-        )
-        
+
+        # Use name override if provided
+        if campaign.campaign_name_override:
+            campaign_name = campaign.campaign_name_override
+        else:
+            campaign_name = generate_campaign_name(
+                geo=campaign.geo,
+                language=campaign.settings.language,
+                ad_format=self.ad_format,
+                bid_type=campaign.settings.bid_type,
+                source=DEFAULT_SETTINGS["source"],
+                keyword=keyword,
+                device="ios",
+                gender=campaign.settings.gender,
+                mobile_combined=campaign.mobile_combined,
+                test_number=campaign.test_number,
+                campaign_type=campaign.settings.campaign_type,
+                geo_name=campaign.settings.geo_name,
+                content_category=self.content_category
+            )
+
         campaign_id = None
         try:
             self.page.goto(f"{self.BASE_URL}/campaigns")
@@ -204,27 +221,23 @@ class CampaignCreator:
                 # Configure iOS OS targeting with version constraint only
                 self._configure_os_targeting(["iOS"], campaign.settings.ios_version)
 
-            # Configure keywords only if there are any (optional for remarketing)
-            if campaign.keywords:
-                self._configure_keywords(campaign.keywords)
-            else:
-                # Just save and continue past the keywords step
-                self._click_save_and_continue()
+            # Configure keywords, negative keywords, interests, and negative interests
+            self._configure_keyword_page(campaign)
 
-            self._configure_tracking_and_bids(campaign)
-            self._configure_schedule_and_budget(campaign)
-
-            # Only delete inherited ads if a CSV will replace them
-            # For SHORTS/template-only campaigns, keep the template's ads
             if self.keep_ads:
-                logger.info("  Keeping template ads (--keep-ads flag, shorts flow)")
-            elif campaign.csv_file:
-                self._delete_all_ads()
+                # SHORTS flow: save audience page and stop (tracking/budget inherited from template)
+                logger.info("  SHORTS: saving audience page — tracking/budget inherited from template")
+                logger.info(f"  ✓ SHORTS campaign configured: {campaign_name} (ID: {campaign_id})")
             else:
-                logger.info("  Keeping template ads (no csv_file — template-only campaign)")
+                self._configure_tracking_and_bids(campaign)
+                self._configure_schedule_and_budget(campaign)
 
-            # Configure ad rotation to Autopilot (CTR)
-            self._configure_ad_rotation("autopilot", "ctr")
+                if campaign.csv_file:
+                    self._delete_all_ads()
+                else:
+                    logger.info("  Keeping template ads (no csv_file — template-only campaign)")
+
+                self._configure_ad_rotation("autopilot", "ctr")
 
             return campaign_id, campaign_name
 
@@ -251,23 +264,27 @@ class CampaignCreator:
             Tuple of (campaign_id, campaign_name)
         """
         keyword = campaign.primary_keyword if campaign.keywords else "Broad"
-        
-        campaign_name = generate_campaign_name(
-            geo=campaign.geo,  # Pass full geo list for multi-geo naming
-            language=campaign.settings.language,
-            ad_format=self.ad_format,  # Use the format passed to creator
-            bid_type=campaign.settings.bid_type,  # Use campaign's bid type
-            source=DEFAULT_SETTINGS["source"],
-            keyword=keyword,
-            device="android",
-            gender=campaign.settings.gender,
-            mobile_combined=campaign.mobile_combined,
-            test_number=campaign.test_number,
-            campaign_type=campaign.settings.campaign_type,
-            geo_name=campaign.settings.geo_name,
-            content_category=self.content_category
-        )
-        
+
+        # Use name override if provided, swap iOS→AND for android variant
+        if campaign.campaign_name_override:
+            campaign_name = campaign.campaign_name_override.replace("_iOS_", "_AND_")
+        else:
+            campaign_name = generate_campaign_name(
+                geo=campaign.geo,
+                language=campaign.settings.language,
+                ad_format=self.ad_format,
+                bid_type=campaign.settings.bid_type,
+                source=DEFAULT_SETTINGS["source"],
+                keyword=keyword,
+                device="android",
+                gender=campaign.settings.gender,
+                mobile_combined=campaign.mobile_combined,
+                test_number=campaign.test_number,
+                campaign_type=campaign.settings.campaign_type,
+                geo_name=campaign.settings.geo_name,
+                content_category=self.content_category
+            )
+
         campaign_id = None
         try:
             self.page.goto(f"{self.BASE_URL}/campaigns")
@@ -287,17 +304,16 @@ class CampaignCreator:
             self._click_save_and_continue()  # Tracking
             self._click_save_and_continue()  # Budget
 
-            # Only delete inherited ads if a CSV will replace them
-            # For SHORTS/template-only campaigns, keep the template's ads
             if self.keep_ads:
                 logger.info("  Keeping template ads (--keep-ads flag, shorts flow)")
-            elif campaign.csv_file:
-                self._delete_all_ads()
+                logger.info("  Keeping template ad rotation (--keep-ads flag)")
             else:
-                logger.info("  Keeping template ads (no csv_file — template-only campaign)")
+                if campaign.csv_file:
+                    self._delete_all_ads()
+                else:
+                    logger.info("  Keeping template ads (no csv_file — template-only campaign)")
 
-            # Configure ad rotation to Autopilot (CTR)
-            self._configure_ad_rotation("autopilot", "ctr")
+                self._configure_ad_rotation("autopilot", "ctr")
 
             return campaign_id, campaign_name
 
@@ -368,27 +384,21 @@ class CampaignCreator:
                     campaign.settings.android_version
                 )
 
-            # Configure keywords only if there are any (optional for remarketing)
-            if campaign.keywords:
-                self._configure_keywords(campaign.keywords)
-            else:
-                # Just save and continue past the keywords step
-                self._click_save_and_continue()
+            # Configure keywords, negative keywords, interests, and negative interests
+            self._configure_keyword_page(campaign)
 
-            self._configure_tracking_and_bids(campaign)
-            self._configure_schedule_and_budget(campaign)
-
-            # Only delete inherited ads if a CSV will replace them
-            # For SHORTS/template-only campaigns, keep the template's ads
             if self.keep_ads:
-                logger.info("  Keeping template ads (--keep-ads flag, shorts flow)")
-            elif campaign.csv_file:
-                self._delete_all_ads()
+                logger.info("  SHORTS: saving audience page — tracking/budget inherited from template")
             else:
-                logger.info("  Keeping template ads (no csv_file — template-only campaign)")
+                self._configure_tracking_and_bids(campaign)
+                self._configure_schedule_and_budget(campaign)
 
-            # Configure ad rotation to Autopilot (CTR)
-            self._configure_ad_rotation("autopilot", "ctr")
+                if campaign.csv_file:
+                    self._delete_all_ads()
+                else:
+                    logger.info("  Keeping template ads (no csv_file — template-only campaign)")
+
+                self._configure_ad_rotation("autopilot", "ctr")
 
             return campaign_id, campaign_name
 
@@ -424,23 +434,31 @@ class CampaignCreator:
         """
         keyword = campaign.primary_keyword if campaign.keywords else "Broad"
         settings = campaign.settings
-        
-        # Generate campaign name
-        campaign_name = generate_campaign_name(
-            geo=campaign.geo,
-            language=campaign.settings.language,
-            ad_format=self.ad_format,
-            bid_type=settings.bid_type,  # Use campaign's bid type
-            source=DEFAULT_SETTINGS["source"],
-            keyword=keyword,
-            device=device_variant,
-            gender=settings.gender,
-            mobile_combined=campaign.mobile_combined,
-            test_number=campaign.test_number,
-            campaign_type=settings.campaign_type,
-            geo_name=settings.geo_name,
-            content_category=self.content_category
-        )
+
+        # Use name override if provided, otherwise auto-generate
+        if campaign.campaign_name_override:
+            # Swap device suffix for the current variant
+            campaign_name = campaign.campaign_name_override
+            if device_variant == "android":
+                campaign_name = campaign_name.replace("_iOS_", "_AND_")
+            elif device_variant == "desktop":
+                campaign_name = campaign_name.replace("_iOS_", "_DESK_").replace("_AND_", "_DESK_")
+        else:
+            campaign_name = generate_campaign_name(
+                geo=campaign.geo,
+                language=campaign.settings.language,
+                ad_format=self.ad_format,
+                bid_type=settings.bid_type,
+                source=DEFAULT_SETTINGS["source"],
+                keyword=keyword,
+                device=device_variant,
+                gender=settings.gender,
+                mobile_combined=campaign.mobile_combined,
+                test_number=campaign.test_number,
+                campaign_type=settings.campaign_type,
+                geo_name=settings.geo_name,
+                content_category=self.content_category
+            )
         
         campaign_id = None
         try:
@@ -455,10 +473,15 @@ class CampaignCreator:
             self._configure_first_page_settings(campaign_name, campaign, device_variant)
 
             # Extract campaign ID from URL after save
-            campaign_id = self.page.url.split("/campaign/")[1].split("/")[0].split("?")[0]
-            logger.info(f"Campaign created with ID: {campaign_id}")
+            # URL patterns: /campaign/1234567/2 or /campaign/drafts/1234567/2
+            url_path = self.page.url.split("/campaign/")[1] if "/campaign/" in self.page.url else ""
+            parts = [p for p in url_path.split("/") if p and p != "drafts" and p.isdigit()]
+            campaign_id = parts[0] if parts else self.page.url.split("/")[-2]
+            logger.info(f"Campaign created with ID: {campaign_id} (URL: {self.page.url})")
 
-            # Step 2: Configure geo targeting
+            # Step 2: Audience page (all targeting on one page for drafts)
+            is_draft = "/drafts/" in self.page.url
+
             logger.info(f"Configuring geo targeting...")
             self._configure_geo(campaign.geo)
             self._set_browser_language(campaign.settings.language)
@@ -468,7 +491,6 @@ class CampaignCreator:
             if variant_lower in ("ios", "android", "mobile", "all mobile"):
                 logger.info(f"Configuring OS targeting...")
                 if campaign.mobile_combined or variant_lower in ("mobile", "all mobile"):
-                    # Target both iOS and Android
                     self._configure_os_targeting(
                         ["iOS", "Android"],
                         settings.ios_version,
@@ -479,20 +501,44 @@ class CampaignCreator:
                 elif variant_lower == "android":
                     self._configure_os_targeting(["Android"], android_version=settings.android_version)
 
-            # Step 2c: Save & Continue (geo/audience page)
-            self._click_save_and_continue()
+            if is_draft:
+                # Draft flow: geo + OS + keywords all on same audience page
+                # Configure keywords/interests on this page (no separate save needed)
+                logger.info(f"Configuring keywords and targeting (same page)...")
+                self._configure_keyword_page_no_save(campaign)
 
-            # Step 3: Configure keywords
-            logger.info(f"Configuring keywords...")
-            self._configure_keywords(campaign.keywords)
+                # Save audience page via "Save Changes" button (not Save & Continue)
+                logger.info(f"Saving draft audience settings...")
+                self.page.evaluate('''() => {
+                    const btns = document.querySelectorAll("button");
+                    for (const btn of btns) {
+                        if (btn.textContent.includes("Save Changes") && btn.offsetParent !== null) {
+                            btn.click();
+                            return true;
+                        }
+                    }
+                    // Fallback: click Save & Continue
+                    const sc = document.querySelector("button.confirmAudience.saveAndContinue");
+                    if (sc) { sc.click(); return true; }
+                    return false;
+                }''')
+                time.sleep(3)
 
-            # Step 4: Configure tracking and bids
-            logger.info(f"Configuring tracking and bids...")
-            self._configure_tracking_and_bids(campaign)
+                # Campaign saved as draft — skip tracking/schedule (will be configured later)
+                logger.info(f"✓ Draft campaign saved: {campaign_name} (ID: {campaign_id})")
+                logger.info(f"  Note: Tracking, budget, and ads need to be configured separately")
+            else:
+                # Clone flow: geo/OS page → Save → keywords page → tracking → budget
+                self._click_save_and_continue()
 
-            # Step 5: Configure schedule and budget
-            logger.info(f"Configuring schedule and budget...")
-            self._configure_schedule_and_budget(campaign)
+                logger.info(f"Configuring keywords and targeting...")
+                self._configure_keyword_page(campaign)
+
+                logger.info(f"Configuring tracking and bids...")
+                self._configure_tracking_and_bids(campaign)
+
+                logger.info(f"Configuring schedule and budget...")
+                self._configure_schedule_and_budget(campaign)
 
             # Now on ads page - ready for CSV upload
             logger.info(f"✓ Campaign {campaign_name} created successfully")
@@ -738,6 +784,7 @@ class CampaignCreator:
             "970x90": "221",
             "320x480": "9771",
             "640x360": "9731",  # Native Rollover/Static Banner
+            "9:16": "9781",    # Shorties In-Stream 9:16
         }
         
         value = dimension_map.get(dim_normalized, "9")  # Default to 300x250
@@ -775,8 +822,16 @@ class CampaignCreator:
     # =========================================================================
     
     def _clone_campaign(self, template_id: str) -> str:
-        """Clone a campaign and return new campaign ID."""
-        # Navigate to campaigns page first
+        """Clone a campaign and return new campaign ID.
+
+        Updated flow (TJ UI 2026):
+        1. Navigate to campaigns page
+        2. Click "Filters" button to open side panel
+        3. Search for campaign in select#campaign select2
+        4. Hover over the campaign row → click inline clone icon
+        5. Extract new campaign ID from redirect URL
+        """
+        # Navigate to campaigns page
         try:
             self.page.goto(f"{self.BASE_URL}/campaigns", wait_until='domcontentloaded', timeout=15000)
         except Exception as e:
@@ -785,52 +840,48 @@ class CampaignCreator:
 
         time.sleep(2)
 
-        # Use the "All Campaigns" searchbox to filter by template ID
-        searchbox = self.page.locator('input.select2-search__field[placeholder="All Campaigns"]')
-        searchbox.fill(template_id)
+        # Open the Filters side panel
+        filters_btn = self.page.locator('button.toggleCampaignsFilter')
+        filters_btn.click(timeout=5000)
+        time.sleep(1)
+
+        # Use the campaign select2 to search by template ID
+        campaign_select = self.page.locator('#campaign + .select2-container, span[aria-labelledby="select2-campaign-container"]')
+        campaign_select.click(timeout=5000)
+        time.sleep(0.5)
+
+        search_input = self.page.locator('.select2-container--open .select2-search__field')
+        search_input.fill(template_id)
         time.sleep(2)
 
         # Click on the dropdown result
-        self.page.click('li.select2-results__option')
+        self.page.locator('li.select2-results__option').first.click(timeout=5000)
         time.sleep(0.5)
 
-        # Click "Apply Filters" button
-        apply_filters_btn = self.page.query_selector('button:has-text("Apply Filters")')
-        if apply_filters_btn:
-            apply_filters_btn.click()
-            time.sleep(2)
+        # Click "Apply" button
+        self.page.locator('button#applyFilters').click(timeout=5000)
+        time.sleep(3)
 
-        # Try multiple selectors for the campaign checkbox
-        checkbox_clicked = False
-        for selector in [
-            f'input[type="checkbox"][value="{template_id}"]',
-            'input[type="checkbox"][name="campaigns[]"]',
-            'td input[type="checkbox"]',
-        ]:
-            try:
-                cb = self.page.locator(selector).first
-                if cb.count() > 0:
-                    cb.click(timeout=5000)
-                    checkbox_clicked = True
-                    break
-            except Exception:
-                continue
+        # Hover over the campaign row to reveal the clone icon, then click it
+        campaign_row = self.page.locator(f'tr:has(i.campaignIconAction.clone[data-campaign-id="{template_id}"])').first
+        if campaign_row.count() == 0:
+            campaign_row = self.page.locator('tr:has(i.campaignIconAction.clone)').first
 
-        if not checkbox_clicked:
-            raise CampaignCreationError(f"Could not find checkbox for template {template_id}")
-
+        campaign_row.hover(timeout=5000)
         time.sleep(0.5)
 
-        # Now the clone button should be visible in the action toolbar
-        self.page.wait_for_selector('button:has(i.fa-copy)', state='visible', timeout=5000)
-        self.page.click('button:has(i.fa-copy)')
-        time.sleep(1)
+        clone_icon = self.page.locator(f'i.campaignIconAction.clone[data-campaign-id="{template_id}"]')
+        if clone_icon.count() == 0:
+            clone_icon = self.page.locator('i.campaignIconAction.clone[data-action="clone"]').first
+
+        clone_icon.first.click(force=True, no_wait_after=True, timeout=5000)
+        time.sleep(2)
 
         # Wait for redirect to new campaign page
-        self.page.wait_for_url(f"{self.BASE_URL}/campaign/*")
+        self.page.wait_for_url(f"{self.BASE_URL}/campaign/**", timeout=30000)
 
         # Extract campaign ID from URL
-        campaign_id = self.page.url.split("/campaign/")[1].split("?")[0]
+        campaign_id = self.page.url.split("/campaign/")[1].split("?")[0].split("/")[0]
 
         return campaign_id
     
@@ -948,34 +999,96 @@ class CampaignCreator:
     def _configure_geo(self, geo_list: List[str]):
         """
         Configure geo targeting (Step 2).
-        
+
         Args:
             geo_list: List of country codes (e.g., ["US", "CA"])
         """
+        # Wait for geo page to fully load — draft pages can be slow to render
+        logger.info(f"  Waiting for geo page: {self.page.url}")
+        time.sleep(3)  # Hard wait for page render after navigation
+
+        # Wait for page to be fully loaded (jQuery/select2 ready)
+        try:
+            self.page.wait_for_load_state("networkidle", timeout=15000)
+        except Exception:
+            pass
+        time.sleep(2)
+
         # Remove existing geo if needed
-        remove_link = self.page.query_selector('a.removeTargetedLocation')
-        if remove_link:
-            remove_link.click()
-            time.sleep(0.5)
-        
-        # Add each geo
+        self.page.evaluate('() => { const r = document.querySelector("a.removeTargetedLocation"); if (r) r.click(); }')
+        time.sleep(0.5)
+
+        # Map ambiguous 2-letter codes to full names for accurate search
+        GEO_SEARCH_MAP = {
+            "AU": "Australia", "AT": "Austria", "AD": "Andorra",
+            "AE": "United Arab Emirates", "AF": "Afghanistan",
+            "GB": "United Kingdom", "GE": "Georgia", "GD": "Grenada",
+            "GG": "Guernsey", "GL": "Greenland",
+            "CA": "Canada", "CR": "Costa Rica", "CW": "Curacao",
+            "CY": "Cyprus", "CZ": "Czech",
+            "US": "United States",
+            "IE": "Ireland", "IM": "Isle of Man", "ID": "Indonesia",
+            "IN": "India", "IL": "Israel",
+            "DE": "Germany", "DK": "Denmark",
+            "ES": "Spain", "EE": "Estonia",
+            "FR": "France", "FI": "Finland", "FO": "Faroe", "FJ": "Fiji",
+            "HK": "Hong Kong", "HU": "Hungary", "HR": "Croatia",
+            "JE": "Jersey", "JP": "Japan",
+            "KR": "Korea", "KY": "Cayman",
+            "LA": "Laos", "LB": "Lebanon", "LC": "Saint Lucia",
+            "LT": "Lithuania", "LU": "Luxembourg", "LV": "Latvia",
+            "MC": "Monaco", "MD": "Moldova", "MT": "Malta",
+            "NL": "Netherlands", "NO": "Norway", "NZ": "New Zealand",
+            "PA": "Panama", "PL": "Poland", "PT": "Portugal", "PR": "Puerto Rico",
+            "RO": "Romania", "RS": "Serbia", "RU": "Russia",
+            "SA": "Saudi Arabia", "SE": "Sweden", "SI": "Slovenia", "SK": "Slovakia",
+            "TH": "Thailand", "TR": "Turkey", "TW": "Taiwan", "TN": "Tunisia",
+            "UA": "Ukraine", "UY": "Uruguay",
+            "VE": "Venezuela",
+            "BB": "Barbados", "BE": "Belgium", "BG": "Bulgaria",
+            "BM": "Bermuda", "BO": "Bolivia", "BS": "Bahamas", "BY": "Belarus", "BZ": "Belize",
+            "CD": "Congo", "YE": "Yemen",
+        }
+
+        # Add each geo using Playwright clicks (not JS — JS doesn't trigger hidden field updates)
+        added = 0
         for geo in geo_list:
-            # Click to open the country dropdown
-            self.page.click('span[id="select2-geo_country-container"]')
-            time.sleep(0.5)
-            
-            # Type country name in the search field
-            search_input = self.page.locator('input.select2-search__field[placeholder="Type here to search"]')
-            search_input.fill(geo)
-            time.sleep(0.5)
-            
-            # Click the first result
-            self.page.click('li.select2-results__option')
-            time.sleep(0.5)
-            
-            # Click Add button
-            self.page.click('button#addLocation')
-            time.sleep(0.5)
+            try:
+                geo_select = self.page.locator('span[id="select2-geo_country-container"]')
+                geo_select.scroll_into_view_if_needed(timeout=5000)
+                geo_select.click(timeout=5000)
+                time.sleep(0.5)
+
+                search_term = GEO_SEARCH_MAP.get(geo, geo)
+                search_input = self.page.locator('input.select2-search__field[placeholder="Type here to search"]')
+                search_input.fill(search_term)
+                time.sleep(0.8)
+
+                option = self.page.locator('li.select2-results__option:not(.select2-results__message)')
+                if option.count() > 0:
+                    option.first.click()
+                    time.sleep(0.3)
+
+                    add_btn = self.page.locator('button#addLocation')
+                    add_btn.click(timeout=5000)
+                    time.sleep(0.5)
+                    added += 1
+                else:
+                    logger.warning(f"  No geo result for: {geo} (searched: {search_term})")
+                    self.page.keyboard.press("Escape")
+                    time.sleep(0.3)
+            except Exception as e:
+                logger.warning(f"  Failed to add geo '{geo}': {e}")
+                try:
+                    self.page.keyboard.press("Escape")
+                except Exception:
+                    pass
+                time.sleep(0.3)
+
+        if added != len(geo_list):
+            logger.warning(f"  Geo: added {added}/{len(geo_list)} countries")
+        else:
+            logger.info(f"  Geo: {added} countries added")
     
     LANGUAGE_MAP = {
         "EN": "English", "FR": "French", "DE": "German", "ES": "Spanish",
@@ -987,9 +1100,31 @@ class CampaignCreator:
     }
 
     def _set_browser_language(self, language_code: str):
-        """Change browser language targeting on the geo page (for cloned campaigns)."""
-        if not language_code or language_code.upper() == "EN":
+        """Change browser language targeting on the geo page (for cloned campaigns).
+
+        If language_code is empty or "ALL", disable browser language targeting entirely.
+        If "EN", keep template default (English). Otherwise set to the specified language.
+        """
+        if language_code and language_code.upper() == "EN":
             return  # Template already has English, no change needed
+
+        # Empty or "ALL" = disable browser language targeting
+        if not language_code or language_code.upper() == "ALL":
+            try:
+                self.page.evaluate('''() => {
+                    const section = document.querySelector("#campaign_browserLanguageTargeting");
+                    if (!section) return;
+                    const checkbox = section.querySelector("input[type='checkbox']");
+                    if (checkbox && checkbox.checked) {
+                        checkbox.click();
+                        checkbox.dispatchEvent(new Event("change", {bubbles: true}));
+                    }
+                }''')
+                time.sleep(0.5)
+                logger.info("  Browser language: ALL (targeting disabled)")
+            except Exception as e:
+                logger.warning(f"  Could not disable browser language targeting: {e}")
+            return
 
         lang_name = self.LANGUAGE_MAP.get(language_code.upper(), language_code)
         try:
@@ -1076,84 +1211,105 @@ class CampaignCreator:
             ios_version: OSVersion object with iOS version constraint (optional)
             android_version: OSVersion object with Android version constraint (optional)
         """
-        # Remove all existing OS first - use "Remove All" button if available
-        remove_all_btn = self.page.query_selector('a.removeAll[data-selection="include"]')
-        if remove_all_btn:
-            remove_all_btn.click()
-            time.sleep(0.5)
-            logger.info("Removed all existing OS")
-        else:
-            # Fallback: remove individually
-            while True:
-                remove_btn = self.page.query_selector('a.removeOsTarget')
-                if not remove_btn:
-                    break
-                remove_btn.click()
-                time.sleep(0.3)
-        
+        # Remove all existing OS first via JS (avoids visibility issues on draft pages)
+        self.page.evaluate('''() => {
+            const removeAll = document.querySelector('a.removeAll[data-selection="include"]');
+            if (removeAll) { removeAll.click(); return; }
+            document.querySelectorAll('a.removeOsTarget').forEach(btn => btn.click());
+        }''')
+        time.sleep(0.5)
+
         # Add each OS with its respective version constraint
         for os_name in operating_systems:
             logger.info(f"Adding OS: {os_name}")
-            
+
             # Determine which version constraint to use for this OS
             os_version = None
             if os_name == "iOS" and ios_version:
                 os_version = ios_version
             elif os_name == "Android" and android_version:
                 os_version = android_version
-            
-            # Click to open OS dropdown
-            self.page.click('span[id="select2-operating_systems_list_include-container"]')
+
+            # Select OS via select2 programmatic API
+            result = self.page.evaluate('''(osName) => {
+                return new Promise((resolve) => {
+                    const sel = document.getElementById("operating_systems_list_include");
+                    if (!sel) { resolve("no_select"); return; }
+
+                    $(sel).select2("open");
+                    setTimeout(() => {
+                        const options = document.querySelectorAll("li.select2-results__option");
+                        for (const opt of options) {
+                            if (opt.textContent.trim().includes(osName)) {
+                                opt.dispatchEvent(new MouseEvent("mouseup", {bubbles: true}));
+                                resolve("selected");
+                                return;
+                            }
+                        }
+                        resolve("not_found");
+                    }, 500);
+                });
+            }''', os_name)
             time.sleep(0.5)
-            
-            # Click on the OS option from the dropdown (don't type, just click)
-            # Wait for dropdown to appear and click the matching option
-            self.page.click(f'li.select2-results__option:has-text("{os_name}")')
-            time.sleep(0.3)
-            
-            # Set version constraint if provided for this OS
+
+            if result != "selected":
+                logger.warning(f"  OS '{os_name}': {result}")
+                continue
+
+            # Set version constraint if provided
             if os_version and hasattr(os_version, 'operator'):
                 from .models import VersionOperator
                 if os_version.operator != VersionOperator.ALL and os_version.version:
                     logger.info(f"Setting version constraint for {os_name}: {os_version}")
-                    
-                    # Click on the version selector to open operator dropdown
-                    # First, need to click the "All Versions" selector
-                    self.page.click('span[id="select2-operating_system_selectors_include-container"]')
-                    time.sleep(0.5)
-                    
-                    # Select the operator based on version constraint
-                    if os_version.operator == VersionOperator.NEWER_THAN:
-                        self.page.click('li.select2-results__option:has-text("Newer than")')
-                    elif os_version.operator == VersionOperator.OLDER_THAN:
-                        self.page.click('li.select2-results__option:has-text("Older than")')
-                    elif os_version.operator == VersionOperator.EQUAL:
-                        self.page.click('li.select2-results__option:has-text("Equal to")')
-                    time.sleep(0.5)
-                    
-                    # Click on the "Select Version" dropdown to open it
-                    # This makes the search input visible
-                    self.page.click('span[id="select2-single_version_include-container"]')
-                    time.sleep(0.5)
-                    
-                    # Now type the version number in the search field that appears
-                    # The search field selector is: input.select2-search__field with aria-controls="select2-single_version_include-results"
-                    search_input = self.page.locator('input.select2-search__field[aria-controls="select2-single_version_include-results"]')
-                    
-                    # Type the version number slowly to trigger the dropdown
-                    search_input.type(os_version.version, delay=100)
-                    time.sleep(0.5)
-                    
-                    # Click on the highlighted option from the dropdown
-                    # Wait for the highlighted option to appear
-                    self.page.wait_for_selector('li.select2-results__option--highlighted', timeout=5000)
-                    self.page.click('li.select2-results__option--highlighted')
-                    time.sleep(0.3)
-                    
+                    operator_text = {
+                        VersionOperator.NEWER_THAN: "Newer than",
+                        VersionOperator.OLDER_THAN: "Older than",
+                        VersionOperator.EQUAL: "Equal to",
+                    }.get(os_version.operator, "")
+
+                    if operator_text:
+                        # Select operator via select2
+                        self.page.evaluate('''(opText) => {
+                            const sel = document.getElementById("operating_system_selectors_include");
+                            if (sel) {
+                                $(sel).select2("open");
+                                setTimeout(() => {
+                                    const opts = document.querySelectorAll("li.select2-results__option");
+                                    for (const o of opts) {
+                                        if (o.textContent.includes(opText)) {
+                                            o.dispatchEvent(new MouseEvent("mouseup", {bubbles: true}));
+                                            break;
+                                        }
+                                    }
+                                }, 300);
+                            }
+                        }''', operator_text)
+                        time.sleep(1)
+
+                        # Select version
+                        self.page.evaluate('''(version) => {
+                            const sel = document.getElementById("single_version_include");
+                            if (sel) {
+                                $(sel).select2("open");
+                                setTimeout(() => {
+                                    const input = document.querySelector(".select2-container--open .select2-search__field");
+                                    if (input) {
+                                        input.value = version;
+                                        input.dispatchEvent(new Event("input", {bubbles: true}));
+                                        setTimeout(() => {
+                                            const opt = document.querySelector("li.select2-results__option--highlighted");
+                                            if (opt) opt.dispatchEvent(new MouseEvent("mouseup", {bubbles: true}));
+                                        }, 500);
+                                    }
+                                }, 300);
+                            }
+                        }''', os_version.version)
+                        time.sleep(1)
                     logger.info(f"✓ Set version constraint for {os_name}: {os_version}")
-            
-            # Click Add button
-            self.page.click('button.smallButton.greenButton.addOsTarget[data-selection="include"]')
+
+            # Click Add button via JS
+            self.page.evaluate('() => { const b = document.querySelector("button.addOsTarget[data-selection=\\"include\\"]"); if (b) b.click(); }')
+            time.sleep(0.5)
             time.sleep(0.5)
             logger.info(f"✓ Added {os_name}")
             
@@ -1161,33 +1317,187 @@ class CampaignCreator:
             self.page.click('body')
             time.sleep(0.3)
     
+    def _configure_keyword_page_no_save(self, campaign: CampaignDefinition):
+        """Configure keywords/interests on the keyword page WITHOUT saving (for draft pages where it's on the same page as geo)."""
+        has_keywords = bool(campaign.keywords)
+        has_negative_keywords = bool(campaign.negative_keywords)
+        has_interests = bool(campaign.interests)
+        has_negative_interests = bool(campaign.negative_interests)
+
+        if not has_keywords and not has_negative_keywords and not has_interests and not has_negative_interests:
+            logger.info("No keywords/interests to configure")
+            return
+
+        keyword_section_exists = self.page.locator('span[id="select2-keyword_select-container"]').count() > 0
+
+        if has_keywords and keyword_section_exists:
+            self._add_include_keywords(campaign.keywords)
+        elif has_keywords and not keyword_section_exists:
+            logger.warning("  Keyword section not found — format may not support it")
+
+        if has_negative_keywords and keyword_section_exists:
+            self._add_negative_keywords(campaign.negative_keywords)
+
+        if has_interests:
+            self._configure_segment_targeting(campaign.interests, "included")
+
+        if has_negative_interests:
+            self._configure_segment_targeting(campaign.negative_interests, "excluded")
+
+    def _configure_keyword_page(self, campaign: CampaignDefinition):
+        """Configure the full keyword/targeting page: keywords, negative keywords, interests, negative interests."""
+        has_keywords = bool(campaign.keywords)
+        has_negative_keywords = bool(campaign.negative_keywords)
+        has_interests = bool(campaign.interests)
+        has_negative_interests = bool(campaign.negative_interests)
+
+        if not has_keywords and not has_negative_keywords and not has_interests and not has_negative_interests:
+            logger.info("No keywords/interests to configure, skipping...")
+            self._click_save_and_continue()
+            return
+
+        # Check if keyword section exists on this page (SHORTS/instream may not have it)
+        keyword_section_exists = self.page.locator('span[id="select2-keyword_select-container"]').count() > 0
+
+        # 1. Include keywords (or clear inherited ones)
+        if has_keywords and keyword_section_exists:
+            self._add_include_keywords(campaign.keywords)
+        elif has_keywords and not keyword_section_exists:
+            logger.warning("  Keyword section not found — skipping keyword targeting (format may not support it)")
+        elif keyword_section_exists:
+            # Clear any inherited keywords from template
+            try:
+                self.page.click('a.removeAllKeywords[data-selection-type="include"]')
+                time.sleep(0.3)
+            except Exception:
+                pass
+
+        # 2. Negative keywords (exclude)
+        if has_negative_keywords and keyword_section_exists:
+            self._add_negative_keywords(campaign.negative_keywords)
+        elif has_negative_keywords and not keyword_section_exists:
+            logger.warning("  Negative keyword section not found — skipping")
+
+        # 3. Segment/interest targeting (include)
+        if has_interests:
+            self._configure_segment_targeting(campaign.interests, "included")
+
+        # 4. Segment/interest targeting (exclude)
+        if has_negative_interests:
+            self._configure_segment_targeting(campaign.negative_interests, "excluded")
+
+        # Save audience page — click Save & Continue and handle any modal that appears
+        logger.info(f"  Saving audience page from {self.page.url}")
+        url_before = self.page.url
+
+        # Click Save & Continue via JS (avoids visibility issues with modals)
+        self.page.evaluate('''() => {
+            const btn = document.querySelector("button.confirmAudience.saveAndContinue");
+            if (btn) btn.click();
+        }''')
+
+        # Poll for modal or URL change for up to 30 seconds
+        for i in range(60):
+            time.sleep(0.5)
+
+            # Check if URL changed (save succeeded)
+            try:
+                current_url = self.page.url
+            except Exception:
+                logger.info(f"  Page navigated (context destroyed)")
+                break
+            if current_url != url_before and "sign-in" not in current_url:
+                logger.info(f"  After save: {current_url}")
+                break
+
+            # Check for and accept any modal
+            try:
+                modal_result = self.page.evaluate('''() => {
+                const modals = document.querySelectorAll(".modal");
+                for (const modal of modals) {
+                    if (modal.offsetHeight > 0 && modal.offsetWidth > 0) {
+                        const buttons = modal.querySelectorAll("button");
+                        for (const btn of buttons) {
+                            const text = btn.textContent.trim();
+                            if (text.includes("Match Suggested CPM") && btn.offsetHeight > 0) {
+                                btn.click();
+                                return "matched_cpm";
+                            }
+                        }
+                        // Click any green/primary button
+                        for (const btn of buttons) {
+                            if (btn.offsetHeight > 0 && (btn.classList.contains("greenButton") || btn.classList.contains("btn-primary"))) {
+                                btn.click();
+                                return "clicked_" + btn.textContent.trim().substring(0, 20);
+                            }
+                        }
+                        return "modal_visible_id=" + modal.id;
+                    }
+                }
+                return "";
+            }''')
+            except Exception:
+                logger.info(f"  Page navigated during modal check")
+                break
+            if modal_result:
+                logger.info(f"  Modal: {modal_result}")
+                time.sleep(3)
+                try:
+                    if self.page.url != url_before:
+                        logger.info(f"  After modal accept: {self.page.url}")
+                        break
+                except Exception:
+                    break
+        else:
+            try:
+                logger.warning(f"  Save & Continue: no navigation after 30s (still on {self.page.url})")
+            except Exception:
+                pass
+
     def _configure_keywords(self, keywords: List[Keyword]):
-        """Configure keyword targeting."""
+        """Configure keyword targeting (legacy — prefer _configure_keyword_page)."""
         # If no keywords, just save and continue (for remarketing campaigns without keywords)
         if not keywords:
             logger.info("No keywords to configure, skipping...")
             self._click_save_and_continue()
             return
-        
+
+        self._add_include_keywords(keywords)
+
+        # Save & Continue
+        self._click_save_and_continue()
+
+    def _add_include_keywords(self, keywords: List[Keyword]):
+        """Add include keywords to the keyword page (does NOT save)."""
+        # Wait for keyword page to load
+        try:
+            self.page.wait_for_selector('span[id="select2-keyword_select-container"]', timeout=15000)
+        except Exception:
+            logger.warning("  Keyword selector not found — page may still be loading")
+            time.sleep(3)
+
         # Remove all existing keywords
-        self.page.click('a.removeAllKeywords[data-selection-type="include"]')
-        time.sleep(0.5)
-        
+        try:
+            self.page.click('a.removeAllKeywords[data-selection-type="include"]')
+            time.sleep(0.5)
+        except Exception:
+            pass
+
         added_keywords = []
-        
+
         # Open keyword selector once
         self.page.click('span[id="select2-keyword_select-container"]')
         time.sleep(0.3)
-        
+
         search_input = self.page.locator('input.select2-search__field[aria-controls="select2-keyword_select-results"]')
-        
+
         for keyword in keywords:
             try:
                 # Clear and type keyword in search field
                 search_input.fill("") # Clear previous search
                 search_input.fill(keyword.name)
                 time.sleep(0.5) # Give time for results to load
-                
+
                 # Wait for any keyword item to appear (platform search is case-insensitive)
                 # Check for both possible result types: keywordItem div or select2 results option
                 keyword_item = None
@@ -1199,24 +1509,24 @@ class CampaignCreator:
                     # Fallback to select2 results option (more common)
                     keyword_item = self.page.locator('li.select2-results__option').first
                     keyword_item.wait_for(state='visible', timeout=3000)
-                
+
                 # Click the keyword from results
                 keyword_item.click()
                 time.sleep(0.3)
                 added_keywords.append(keyword)
-                
+
             except PlaywrightTimeout:
                 print(f"      ⚠ Skipping keyword '{keyword.name}' - not found after 5 seconds")
             except Exception as e:
                 print(f"      ⚠ Error with keyword '{keyword.name}': {str(e)}")
-        
+
         # Close keyword selector after all keywords are processed
         self.page.keyboard.press('Escape')
         time.sleep(0.5)
-        
+
         if not added_keywords:
             print(f"      ⚠ WARNING: No keywords were added!")
-        
+
         # All keywords added, now set match types
         # IMPORTANT: Click the LABEL, not the input (input is hidden)
         for keyword in added_keywords:
@@ -1238,9 +1548,184 @@ class CampaignCreator:
                         print(f"      ⚠ Could not set broad match for '{keyword.name}', skipping")
                 time.sleep(0.2)
             # If exact, leave it (it's the default)
-        
-        # Save & Continue
-        self._click_save_and_continue()
+
+        logger.info(f"  Keywords: {len(added_keywords)} added")
+
+    def _add_negative_keywords(self, negative_keywords: List[Keyword]):
+        """Add negative (exclude) keywords on the keyword page (does NOT save)."""
+        try:
+            # Open the exclude keyword selector
+            exclude_select = self.page.locator('span[id="select2-keyword_select_excluded-container"]')
+            if exclude_select.count() == 0:
+                logger.warning("  Negative keyword selector not found")
+                return
+
+            exclude_select.click(timeout=5000)
+            time.sleep(0.3)
+
+            search_input = self.page.locator(
+                'input.select2-search__field[aria-controls="select2-keyword_select_excluded-results"]'
+            )
+
+            added = 0
+            for kw in negative_keywords:
+                try:
+                    search_input.fill("")
+                    search_input.fill(kw.name)
+                    time.sleep(0.5)
+
+                    keyword_item = None
+                    try:
+                        keyword_item = self.page.locator('div.keywordItem').first
+                        keyword_item.wait_for(state='visible', timeout=2000)
+                    except Exception:
+                        keyword_item = self.page.locator('li.select2-results__option').first
+                        keyword_item.wait_for(state='visible', timeout=3000)
+
+                    keyword_item.click()
+                    time.sleep(0.3)
+                    added += 1
+                except Exception as e:
+                    logger.warning(f"  Could not add negative keyword '{kw.name}': {e}")
+
+            self.page.keyboard.press('Escape')
+            time.sleep(0.3)
+            logger.info(f"  Negative keywords: {added} added")
+        except Exception as e:
+            logger.warning(f"  Could not configure negative keywords: {e}")
+
+    def _configure_segment_targeting(self, segments: List[str], targeting_type: str = "included"):
+        """Configure segment/interest targeting using the proven V4 code.
+
+        For "included": calls V4 _configure_segments directly.
+        For "excluded": same logic but clicks the "excluded" link and "Exclude Segment" button.
+
+        Args:
+            segments: List of segment names (e.g., ["Intent to buy VOD-Hentai"])
+            targeting_type: "included" or "excluded"
+        """
+        try:
+            from v4.utils import enable_toggle
+
+            if targeting_type == "included":
+                # Use V4 code directly — proven to work
+                from v4.steps.step2_geo_audience import _configure_segments
+                from v4.models import V4CampaignConfig
+                config = V4CampaignConfig(segment_targeting=";".join(segments))
+                _configure_segments(self.page, config)
+
+                # Deduplicate segments in the hidden field (V4 code can add duplicates)
+                self.page.evaluate('''() => {
+                    const el = document.getElementById("segments");
+                    if (!el || !el.value) return;
+                    try {
+                        const data = JSON.parse(el.value);
+                        if (data.included) {
+                            const seen = new Set();
+                            data.included = data.included.filter(s => {
+                                if (seen.has(s.id)) return false;
+                                seen.add(s.id);
+                                return true;
+                            });
+                        }
+                        el.value = JSON.stringify(data);
+                    } catch(e) {}
+                }''')
+            else:
+                # Excluded: same flow as V4 but with excluded selectors
+                enable_toggle(self.page, "campaign_segmentTargeting")
+                time.sleep(0.8)
+
+                clicked = self.page.evaluate('''() => {
+                    const section = document.querySelector("#campaign_segmentTargeting");
+                    if (section) section.scrollIntoView({behavior: "instant", block: "center"});
+                    const link = document.querySelector('a.openSegmentTargetingModal[data-targeting-segment-type="excluded"]');
+                    if (link) { link.click(); return true; }
+                    return false;
+                }''')
+                if not clicked:
+                    logger.warning(f"  Segment 'excluded' link not found")
+                    return
+                time.sleep(2)
+
+                # Wait for modal loading (same as V4)
+                for _ in range(15):
+                    loading = self.page.evaluate('''() => {
+                        const modals = document.querySelectorAll('[class*="modal"]');
+                        for (const m of modals) {
+                            if (m.offsetHeight > 0 && m.innerText.includes("Loading")) return true;
+                        }
+                        return false;
+                    }''')
+                    if not loading:
+                        break
+                    time.sleep(1)
+                time.sleep(1)
+
+                search_input = self.page.locator('input[placeholder*="VOD"], input[placeholder*="Try"]').first
+
+                for segment_name in segments:
+                    search_input.fill("")
+                    search_input.fill(segment_name)
+                    time.sleep(1)
+
+                    for _ in range(10):
+                        loading = self.page.evaluate('''() => {
+                            const modals = document.querySelectorAll('[class*="modal"]');
+                            for (const m of modals) {
+                                if (m.offsetHeight > 0 && m.innerText.includes("Loading")) return true;
+                            }
+                            return false;
+                        }''')
+                        if not loading:
+                            break
+                        time.sleep(1)
+                    time.sleep(0.5)
+
+                    checked = self.page.evaluate('''(name) => {
+                        const items = document.querySelectorAll('label, li, [class*="segment"], [class*="Segment"]');
+                        for (const item of items) {
+                            if (item.textContent.includes(name)) {
+                                const cb = item.querySelector('input[type="checkbox"]');
+                                if (cb && !cb.checked) {
+                                    cb.click();
+                                    cb.dispatchEvent(new Event("change", {bubbles: true}));
+                                    return "checked";
+                                }
+                                if (cb && cb.checked) return "already checked";
+                            }
+                        }
+                        return "not found";
+                    }''', segment_name)
+
+                    if "checked" in checked:
+                        logger.info(f"  ✓ Segment (excluded): {segment_name}")
+                    else:
+                        logger.warning(f"  Segment '{segment_name}' (excluded): {checked}")
+
+                # Click "Exclude Segment" button
+                self.page.evaluate('''() => {
+                    const buttons = document.querySelectorAll('button');
+                    for (const b of buttons) {
+                        if (b.textContent.includes("Exclude Segment") && b.offsetHeight > 0) {
+                            b.click();
+                            return true;
+                        }
+                    }
+                    return false;
+                }''')
+                time.sleep(1)
+
+            logger.info(f"  Segment targeting ({targeting_type}): {len(segments)} segment(s) configured")
+
+            # Dismiss Review Your Bids modal if it appeared after segment config
+            time.sleep(1)
+            self._dismiss_modals()
+
+        except ImportError:
+            logger.warning(f"  V4 segment code not available — cannot configure segments")
+        except Exception as e:
+            logger.warning(f"  Could not configure segment targeting ({targeting_type}): {e}")
     
     def _configure_tracking_and_bids(self, campaign: CampaignDefinition):
         """Configure tracking and bids (Step 3)."""
@@ -1629,11 +2114,29 @@ class CampaignCreator:
             # Check for reviewYourBidsModal or similar overlay modals
             dismissed = self.page.evaluate('''() => {
                 let dismissed = false;
-                // Close reviewYourBidsModal
+                // Handle reviewYourBidsModal — click "Match Suggested CPM" to accept bid changes
                 const modal = document.querySelector("#reviewYourBidsModal");
-                if (modal && modal.style.display !== "none") {
-                    const closeBtn = modal.querySelector(".close, [data-dismiss='modal'], button.closeModal");
-                    if (closeBtn) { closeBtn.click(); dismissed = true; }
+                if (modal && (modal.classList.contains("show") || modal.offsetHeight > 0)) {
+                    // Try "Match Suggested CPM" button first (green button — accepts the bid change)
+                    const buttons = modal.querySelectorAll("button");
+                    for (const btn of buttons) {
+                        if (btn.textContent.includes("Match Suggested CPM") && btn.offsetHeight > 0) {
+                            btn.click();
+                            dismissed = true;
+                            break;
+                        }
+                    }
+                    // Fallback: close it
+                    if (!dismissed) {
+                        const closeBtn = modal.querySelector(".close, [data-dismiss='modal']");
+                        if (closeBtn) { closeBtn.click(); dismissed = true; }
+                    }
+                    // Clean up backdrop
+                    setTimeout(() => {
+                        const backdrop = document.querySelector(".modal-backdrop");
+                        if (backdrop) backdrop.remove();
+                        document.body.classList.remove("modal-open");
+                    }, 500);
                 }
                 // Close any visible Bootstrap modal
                 const openModal = document.querySelector(".modal.in, .modal.show");
@@ -1647,14 +2150,23 @@ class CampaignCreator:
                 return dismissed;
             }''')
             if dismissed:
-                time.sleep(0.5)
-                logger.info("  Dismissed blocking modal")
+                time.sleep(2)  # Wait longer after modal dismiss (bid recalculation)
+                logger.info("  Dismissed blocking modal (matched suggested CPM)")
         except Exception:
             pass
 
     def _click_save_and_continue(self):
-        """Click Save & Continue button, verifying the page actually navigates."""
+        """Click Save & Continue button, verifying the page actually navigates or step changes."""
         url_before = self.page.url
+
+        is_draft = "/drafts/" in url_before
+
+        # For draft pages, detect step changes by page content (URL won't change)
+        step_before = None
+        if is_draft:
+            step_before = self.page.evaluate(
+                '() => { const a = document.querySelector(".wizard-step.active, .nav-link.active, [class*=\\"step\\"][class*=\\"active\\"]"); return a ? a.textContent.trim().substring(0, 30) : ""; }'
+            )
 
         # Dismiss any modals that might be blocking
         self._dismiss_modals()
@@ -1673,13 +2185,58 @@ class CampaignCreator:
                 button = self.page.query_selector(selector)
                 if button and button.is_visible():
                     button.click()
-                    time.sleep(2)  # Wait for page transition
-                    # Dismiss any modal that pops up after save
-                    self._dismiss_modals()
 
-                    # Verify URL changed (navigation happened)
+                    # Wait for either URL change or Review Your Bids modal (up to 10s)
+                    for _ in range(20):
+                        time.sleep(0.5)
+                        # Check URL change
+                        if self.page.url != url_before:
+                            return
+                        # Check for Review Your Bids modal
+                        modal_handled = self.page.evaluate('''() => {
+                            const modal = document.querySelector("#reviewYourBidsModal");
+                            if (modal && (modal.classList.contains("show") || modal.offsetHeight > 0)) {
+                                const buttons = modal.querySelectorAll("button");
+                                for (const btn of buttons) {
+                                    if (btn.textContent.includes("Match Suggested CPM") && btn.offsetHeight > 0) {
+                                        btn.click();
+                                        return "matched";
+                                    }
+                                }
+                                // Fallback: click any visible button that isn't "close"
+                                for (const btn of buttons) {
+                                    if (btn.offsetHeight > 0 && !btn.classList.contains("close")) {
+                                        btn.click();
+                                        return "clicked_fallback";
+                                    }
+                                }
+                            }
+                            return "";
+                        }''')
+                        if modal_handled:
+                            logger.info(f"  Review Your Bids modal: {modal_handled}")
+                            time.sleep(3)  # Wait for bid recalculation and navigation
+                            if self.page.url != url_before:
+                                return
+                            break
+
+                    # Final check
+                    self._dismiss_modals()
+                    time.sleep(2)
                     if self.page.url != url_before:
                         return
+
+                    # For draft pages: check if wizard step changed (URL stays same)
+                    if is_draft:
+                        step_after = self.page.evaluate(
+                            '() => { const a = document.querySelector(".wizard-step.active, .nav-link.active, [class*=\\"step\\"][class*=\\"active\\"]"); return a ? a.textContent.trim().substring(0, 30) : ""; }'
+                        )
+                        if step_after and step_after != step_before:
+                            logger.info(f"  Draft wizard: {step_before} → {step_after}")
+                            return
+                        time.sleep(2)
+                        if self.page.url != url_before:
+                            return
 
                     # URL didn't change — click may have been intercepted by modal
                     if attempt < 2:
@@ -1706,7 +2263,30 @@ class CampaignCreator:
                     self._dismiss_modals()
                     time.sleep(1)
                     continue
-                raise CampaignCreationError("Could not find Save & Continue button")
+                # Last resort: JS click any save button
+                logger.warning(f"  No Save & Continue button visible after 3 attempts, trying JS click on {self.page.url}")
+                clicked = self.page.evaluate('''() => {
+                    const btns = document.querySelectorAll('button.saveAndContinue, button[type="submit"]');
+                    for (const btn of btns) {
+                        btn.click();
+                        return btn.textContent.trim().substring(0, 40);
+                    }
+                    // Fallback: find any button containing "Save"
+                    const allBtns = document.querySelectorAll('button');
+                    for (const btn of allBtns) {
+                        if (btn.textContent.includes("Save") && btn.offsetHeight > 0) {
+                            btn.click();
+                            return btn.textContent.trim().substring(0, 40);
+                        }
+                    }
+                    return "";
+                }''')
+                if clicked:
+                    logger.info(f"  JS clicked: {clicked}")
+                    time.sleep(3)
+                    if self.page.url != url_before:
+                        return
+                raise CampaignCreationError(f"Could not find Save & Continue button on {self.page.url}")
 
         # If we exhausted retries but URL hasn't changed, try JS click as last resort
         if self.page.url == url_before:

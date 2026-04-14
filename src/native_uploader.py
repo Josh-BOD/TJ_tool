@@ -569,14 +569,14 @@ class NativeUploader:
     
     def _update_csv_with_campaign_name(self, csv_path: Path, campaign_name: str) -> Path:
         """
-        Update CSV file to replace sub11 parameter with actual campaign name.
-        Also truncates ad names to 64 characters (TrafficJunky limit).
+        Prepare CSV for upload: truncates ad names to 64 characters (TrafficJunky limit).
+        Target URLs are preserved as-is (TJ macros like {CampaignName} resolve at serve-time).
         Creates a temporary CSV file with updated values.
-        
+
         Args:
             csv_path: Original CSV file path
-            campaign_name: Actual campaign name to use
-            
+            campaign_name: Campaign name (used for logging)
+
         Returns:
             Path to updated temporary CSV file
         """
@@ -621,14 +621,11 @@ class NativeUploader:
                         else:
                             logger.debug(f"Ad name OK ({len(ad_name)} chars): {ad_name}")
                     
-                    # Update Target URL - replace sub11 value with actual campaign name
-                    if 'Target URL' in row and row['Target URL']:
-                        # Replace sub11=<anything> with sub11=<campaign_name>
-                        row['Target URL'] = re.sub(r'sub11=[^&]*', f'sub11={campaign_name}', row['Target URL'])
+                    # Preserve Target URL as-is — TJ macros like {CampaignName} are resolved at serve-time
                     
                     writer.writerow(row)
             
-            logger.info(f"✓ Updated Native CSV with campaign name in sub11: {campaign_name}")
+            logger.info(f"✓ Prepared Native CSV for upload (ad name truncation check done)")
             return temp_path
             
         except Exception as e:

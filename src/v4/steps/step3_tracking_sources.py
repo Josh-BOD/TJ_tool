@@ -197,9 +197,11 @@ def _apply_suggested_cpm_bids(page: Page, config: V4CampaignConfig):
 
 
 def _apply_min_cpm_bids(page: Page, config: V4CampaignConfig):
-    """Set each source bid to min CPM + flat dollar or percentage add-on."""
+    """Set each source's bid to its min CPM, optionally adjusted by percentage.
+
+    Uses the pencil-icon inline edit flow, same as static mode.
+    """
     adjust_pct = config.cpm_bid_value or 0
-    flat_add = getattr(config, "cpm_flat_add", None) or 0
 
     # First match suggested to populate bid infrastructure
     _click_match_suggested_cpm(page)
@@ -208,21 +210,19 @@ def _apply_min_cpm_bids(page: Page, config: V4CampaignConfig):
 
     count = 0
     for source in sources:
-        bid = source["minCpm"]
-        if flat_add:
-            bid = bid + flat_add
-        elif adjust_pct:
+        bid = source['minCpm']
+        if adjust_pct:
             bid = bid * (1 + adjust_pct / 100)
         bid = round(bid, 3)
-        if _set_source_bid_inline(page, source["tableId"], source["rowIdx"], bid):
+        if _set_source_bid_inline(page, source['tableId'], source['rowIdx'], bid):
             count += 1
 
-    if flat_add:
-        logger.info(f"    Set {count}/{len(sources)} sources to min CPM +${flat_add:.2f}")
-    elif adjust_pct:
+    if adjust_pct:
         logger.info(f"    Set {count}/{len(sources)} sources to min CPM +{adjust_pct}%")
     else:
         logger.info(f"    Set {count}/{len(sources)} sources to min CPM")
+
+
 def _apply_static_cpm_bids(page: Page, config: V4CampaignConfig):
     """Set all bids to a fixed value, floored at each source's min CPM.
 

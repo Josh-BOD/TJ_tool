@@ -135,11 +135,10 @@ class V4CampaignCreator:
         csv_dir: str,
     ) -> Tuple[str, str]:
         """
-        Clone a campaign from template_campaign_id, then update all fields from config.
+        Clone a campaign from template_campaign_id, then update name/keywords/labels.
 
-        Applies: name, group, labels, gender, content_category, content_rating (step 1),
-        geos (step 2), trackers + source_selection (step 3),
-        frequency_cap + daily_budget (step 4).
+        Inherits bids, sources, budget, schedule from the template.
+        Only updates: name, group, keywords, labels, and uploads ads.
 
         Args:
             config: Campaign config with template_campaign_id set.
@@ -150,7 +149,6 @@ class V4CampaignCreator:
             (campaign_id, campaign_name)
         """
         import time as _t
-        from .steps.step1_basic_settings import GENDER_MAP
 
         template_id = config.template_campaign_id
         campaign_name = self.name_prefix + self._build_name(config, variant)
@@ -165,9 +163,9 @@ class V4CampaignCreator:
         # URL patterns: /campaign/{id}#section_basicSettings
         #               /campaign/{id}/audience#section_audienceTargeting
         #               /campaign/{id}/tracking-spots-rules
-        #               /campaign/{id}/schedule-budget
+        #               /campaign/{id}/ad-settings
 
-        # ── Step 1: Basic Settings ───────────────────────────
+        # ── Step 1: Update name ──────────────────────────────
         if not check_session(self.page):
             raise V4CreationError("Session expired after clone", orphan_id=new_id)
 
@@ -201,172 +199,25 @@ class V4CampaignCreator:
         if labels:
             step1._set_labels(self.page, labels)
 
-        # Group
-        if config.group:
-            try:
-                step1._select_or_create_group(self.page, config.group)
-                logger.info(f"    Group: {config.group}")
-            except Exception as e:
-                logger.warning(f"    Could not set group: {e}")
-
-        # Gender
-        if config.gender:
-            try:
-                from .utils import set_radio
-                gen_val = GENDER_MAP.get(config.gender.lower(), "1")
-                set_radio(self.page, "demographic_targeting_id", gen_val)
-                logger.info(f"    Gender: {config.gender}")
-            except Exception as e:
-                logger.warning(f"    Could not set gender: {e}")
-
-        # Content category
-        if config.content_category:
-            try:
-                from .utils import set_radio
-                cat = config.content_category.lower()
-                if cat not in ("straight", "gay", "trans"):
-                    cat = "straight"
-                set_radio(self.page, "content_category_id", cat)
-                logger.info(f"    Content category: {cat}")
-            except Exception as e:
-                logger.warning(f"    Could not set content_category: {e}")
-
-        # Content rating
-        if config.content_rating:
-            try:
-                rating = config.content_rating.lower()
-                try:
-                    self.page.click(f'label:has(input[value="{rating}"])', timeout=3000)
-                except Exception:
-                    self.page.click(f'label:has-text("{config.content_rating}")', timeout=2000)
-                logger.info(f"    Content rating: {config.content_rating}")
-            except Exception as e:
-                logger.warning(f"    Could not set content_rating: {e}")
-
-        # Ad dimensions
-        if config.ad_dimensions:
-            try:
-                from .steps.step1_basic_settings import DIMENSION_MAP
-                dim_norm = config.ad_dimensions.lower().replace(" ", "")
-                dim_val = DIMENSION_MAP.get(dim_norm, "9")
-                set_radio(self.page, "ad_dimension_id", dim_val)
-                logger.info(f"    Dimensions: {config.ad_dimensions}")
-            except Exception as e:
-                logger.warning(f"    Could not set ad_dimensions: {e}")
-
-        # Save step 1
+        # Save via any visible save/update button
         self._save_draft_step(self.page)
         logger.info(f"  [Nav] Step 1 saved")
 
-        # ── Step 2: Geo & Audience ───────────────────────────
-        self.page.goto(
-            f"{BASE_URL}/campaign/{new_id}/audience#section_audienceTargeting",
-            wait_until="domcontentloaded",
-            timeout=30000,
-        )
-        _t.sleep(5)
-        dismiss_modals(self.page)
-
-        # Update geos if config differs from template (always apply to be safe)
-        if config.geo:
-            try:
-                step2._add_geos(self.page, config.geo)
-                logger.info(f"    Geos: {config.geo}")
-            except Exception as e:
-                logger.warning(f"    Could not set geos: {e}")
-
-        # Update keywords if set
+        # ── Step 2: Update keywords ──────────────────────────
         if config.keywords:
+            self.page.goto(
+                f"{BASE_URL}/campaign/{new_id}/audience#section_audienceTargeting",
+                wait_until="domcontentloaded",
+                timeout=30000,
+            )
+            _t.sleep(5)
+            dismiss_modals(self.page)
             _handle_keywords(self.page, config)
+            self._save_draft_step(self.page)
+            logger.info(f"  [Nav] Step 2 saved (keywords updated)")
 
-        self._save_draft_step(self.page)
-        logger.info(f"  [Nav] Step 2 saved")
-
-        # ── Step 3: Tracking & Sources ───────────────────────
-        self.page.goto(
-            f"{BASE_URL}/campaign/{new_id}/tracking-spots-rules",
-            wait_until="domcontentloaded",
-            timeout=30000,
-        )
-        _t.sleep(5)
-        dismiss_modals(self.page)
-
-        # Trackers
-        if config.tracker_id:
-            from .utils import select2_choose
-            sep = ";" if ";" in config.tracker_id else ","
-            trackers = [t.strip() for t in config.tracker_id.split(sep) if t.strip()]
-            for tracker_name in trackers:
-                try:
-                    select2_choose(
-                        self.page,
-                        '#campaignTrackerId + .select2-container, '
-                        'span[id*="campaignTrackerId"]',
-                        tracker_name,
-                    )
-                    logger.info(f"    Tracker: {tracker_name}")
-                except Exception as e:
-                    logger.warning(f"    Could not set tracker '{tracker_name}': {e}")
-
-        # Dismiss any alerts that appeared during tracker setup
-        dismiss_modals(self.page)
-        _t.sleep(1)
-
-        # Source selection
-        if config.source_selection:
-            try:
-                ss = config.source_selection.strip()
-                if ss and ss.upper() != "ALL":
-                    from .steps.step3_tracking_sources import _select_manual_sources, _include_matching_sources, _refresh_sources
-                    _select_manual_sources(self.page)
-                    terms = [t.strip() for t in ss.split(";") if t.strip()]
-                    for term in terms:
-                        _include_matching_sources(self.page, term)
-                    _refresh_sources(self.page)
-                    logger.info(f"    Source selection: {ss}")
-            except Exception as e:
-                logger.warning(f"    Could not set source_selection: {e}")
-
-        self._save_draft_step(self.page)
-        logger.info(f"  [Nav] Step 3 saved")
-
-        # ── Step 4: Schedule & Budget ────────────────────────
-        self.page.goto(
-            f"{BASE_URL}/campaign/{new_id}/schedule-budget",
-            wait_until="domcontentloaded",
-            timeout=30000,
-        )
-        _t.sleep(5)
-        dismiss_modals(self.page)
-
-        # Frequency cap
-        if config.frequency_cap:
-            try:
-                self.page.fill('input#frequency_cap_times', "")
-                self.page.fill('input#frequency_cap_times', str(config.frequency_cap))
-                logger.info(f"    Frequency cap: {config.frequency_cap}")
-            except Exception as e:
-                logger.warning(f"    Could not set frequency_cap: {e}")
-
-        if config.frequency_cap_every:
-            try:
-                self.page.fill('input#frequency_cap_every', "")
-                self.page.fill('input#frequency_cap_every', str(config.frequency_cap_every))
-                logger.info(f"    Frequency cap every: {config.frequency_cap_every}")
-            except Exception as e:
-                logger.warning(f"    Could not set frequency_cap_every: {e}")
-
-        # Daily budget
-        if config.daily_budget:
-            try:
-                self.page.fill('input#daily_budget', "")
-                self.page.fill('input#daily_budget', str(config.daily_budget))
-                logger.info(f"    Daily budget: {config.daily_budget}")
-            except Exception as e:
-                logger.warning(f"    Could not set daily_budget: {e}")
-
-        self._save_draft_step(self.page)
-        logger.info(f"  [Nav] Step 4 saved")
+        # ── Steps 3 & 4: Skip (inherited from template) ─────
+        logger.info(f"  [Nav] Steps 3-4 skipped (inherited from template)")
 
         # Step 5 skipped — clone inherits ads from template
 

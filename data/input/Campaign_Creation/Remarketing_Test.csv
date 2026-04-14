@@ -1,4 +1,9 @@
-group,keywords,keyword_matches,gender,geo,ad_format,campaign_type,bid_type,variants,csv_file,target_cpa,per_source_budget,max_bid,frequency_cap,max_daily_budget,enabled
-Milfs,,,,US,NATIVE,Remarketing,CPM,"desktop,all mobile",Native_Milf_Ads.csv,50,200,10,2,250,TRUE
-Latina,,,,US,INSTREAM,Remarketing,CPM,"desktop,all mobile",PreRoll_Latina_Ads.csv,50,200,10,2,250,TRUE
-
+group,keywords,keyword_matches,gender,geo,geo_name,ad_format,campaign_type,bid_type,variants,csv_file,target_cpa,per_source_budget,max_bid,frequency_cap,max_daily_budget,t,enabled
+Remarketing,,,MF,Brazil;Costa Rica;Spain;Romania;Singapore,OTH2,NATIVE,Remarketing,CPM,all mobile,remarketing_Ads-native.csv,50,200,4,2,250,,FALSE
+Remarketing,,,MF,Brazil;Costa Rica;Spain;Romania;Singapore,OTH2,INSTREAM,Remarketing,CPM,desktop,remarketing_Ads-Preroll.csv,50,200,4,2,250,,TRUE
+Remarketing,,,MF,United Arab Emirates;Germany;Estonia;Croatia;Hungary;Israel;Republic of Lithuania;Puerto Rico;Slovakia;Taiwan,OTH3,INSTREAM,Remarketing,CPM,"desktop,all mobile",remarketing_Ads-Preroll.csv,50,200,4,2,250,,TRUE
+Remarketing,,,MF,United Arab Emirates;Germany;Estonia;Croatia;Hungary;Israel;Republic of Lithuania;Puerto Rico;Slovakia;Taiwan,OTH3,NATIVE,Remarketing,CPM,"desktop,all mobile",remarketing_Ads-native.csv,50,200,4,2,250,,TRUE
+Remarketing,,,MF,Albania;Bulgaria;Greece;Hong Kong;Japan;South Korea;Latvia;Netherlands:Portugal;Saudi Arabia,OTH4,NATIVE,Remarketing,CPM,"desktop,all mobile",remarketing_Ads-native.csv,50,200,4,2,250,,TRUE
+Remarketing,,,MF,Albania;Bulgaria;Greece;Hong Kong;Japan;South Korea;Latvia;Netherlands:Portugal;Saudi Arabia,OTH4,INSTREAM,Remarketing,CPM,"desktop,all mobile",remarketing_Ads-Preroll.csv,50,200,4,2,250,,TRUE
+Remarketing,,,MF,Chile;Dominican Republic;France;Mexico;Poland;Serbia,OTH5,NATIVE,Remarketing,CPM,"desktop,all mobile",remarketing_Ads-native.csv,50,200,4,2,250,,TRUE
+Remarketing,,,MF,Chile;Dominican Republic;France;Mexico;Poland;Serbia,OTH5,INSTREAM,Remarketing,CPM,"desktop,all mobile",remarketing_Ads-Preroll.csv,50,200,4,2,250,,TRUE

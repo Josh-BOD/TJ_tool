@@ -440,13 +440,13 @@ class TJUploader:
     
     def _update_csv_with_campaign_name(self, csv_path: Path, campaign_name: str) -> Path:
         """
-        Check if CSV needs modification for campaign name.
-        If URLs use {CampaignName} macro, use original file directly (no temp file).
-        Only creates temp file if sub11 replacement or ad name truncation is needed.
-        
+        Prepare CSV for upload: truncates ad names to 64 characters (TrafficJunky limit).
+        Target URLs are preserved as-is (TJ macros resolve at serve-time).
+        Only creates temp file if ad name truncation is needed.
+
         Args:
             csv_path: Original CSV file path
-            campaign_name: Actual campaign name to use
+            campaign_name: Campaign name (used for logging)
             
         Returns:
             Path to use for upload (original or temp)
@@ -468,13 +468,6 @@ class TJUploader:
                 if 'Ad Name' in row and row['Ad Name'] and len(row['Ad Name']) > 64:
                     needs_modification = True
                     break
-                
-                # Check if any URLs need sub11 replacement (not using {CampaignName} macro)
-                for url_field in ['Target URL', 'Custom CTA URL', 'Banner CTA URL']:
-                    if url_field in row and row[url_field]:
-                        if '{CampaignName}' not in row[url_field] and 'sub11=' in row[url_field]:
-                            needs_modification = True
-                            break
                 
                 if needs_modification:
                     break
@@ -509,15 +502,10 @@ class TJUploader:
                                 row['Ad Name'] = ad_name[:64]
                                 logger.info(f"Truncated ad name to 64 chars: {row['Ad Name']}")
                     
-                    # Update URLs only if NOT using {CampaignName} macro
-                    for url_field in ['Target URL', 'Custom CTA URL', 'Banner CTA URL']:
-                        if url_field in row and row[url_field]:
-                            if '{CampaignName}' not in row[url_field]:
-                                row[url_field] = re.sub(r'sub11=[^&]*', f'sub11={campaign_name}', row[url_field])
-                    
+                    # Preserve Target URLs as-is — TJ macros resolve at serve-time
                     writer.writerow(row)
             
-            logger.info(f"✓ Created temp CSV (truncated names or updated sub11)")
+            logger.info(f"✓ Created temp CSV (truncated ad names)")
             return temp_path
             
         except Exception as e:

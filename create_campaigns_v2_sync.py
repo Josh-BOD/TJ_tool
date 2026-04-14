@@ -81,8 +81,16 @@ def create_campaign_set(page, campaign: CampaignDefinition, csv_dir: Path, keep_
     ad_format = campaign.settings.ad_format
     campaign_type = campaign.settings.campaign_type
     content_category = campaign.settings.content_category
+
+    # Detect if this is a SHORTS gay/trans campaign that needs from-scratch creation
+    # (no gay/trans SHORTS templates exist — can't clone from straight, category is locked)
+    needs_from_scratch = (
+        ad_format == "SHORTS"
+        and content_category in ("gay", "trans")
+    )
+
     creator = CampaignCreator(page, ad_format=ad_format, campaign_type=campaign_type, content_category=content_category, keep_ads=keep_ads)
-    
+
     # SHORTS campaigns have no csv_file (ads baked into template) — skip CSV check
     has_csv = bool(campaign.csv_file)
     csv_path = csv_dir / campaign.csv_file if has_csv else None
@@ -92,18 +100,37 @@ def create_campaign_set(page, campaign: CampaignDefinition, csv_dir: Path, keep_
 
     geo = campaign.geo[0] if campaign.geo else "US"
     created_campaigns = []
-    
-    for variant in campaign.variants:
+
+    # Ensure iOS is processed before Android (Android clones from iOS)
+    variants = list(campaign.variants)
+    if "ios" in variants and "android" in variants:
+        ios_idx = variants.index("ios")
+        android_idx = variants.index("android")
+        if android_idx < ios_idx:
+            variants[ios_idx], variants[android_idx] = variants[android_idx], variants[ios_idx]
+
+    for variant in variants:
         # Skip Android if mobile_combined and not using all_mobile variant (iOS campaign handles both)
         if campaign.mobile_combined and variant == "android" and "all_mobile" not in campaign.variants:
             continue
-        
+
         try:
             logger.info(f"\n{'='*60}")
             logger.info(f"Creating: {campaign.group} - {variant.upper()}")
+            if needs_from_scratch:
+                logger.info(f"  → From-scratch (no {content_category} SHORTS template)")
             logger.info(f"{'='*60}")
-            
-            if variant == "desktop":
+
+            if needs_from_scratch:
+                # Gay/Trans SHORTS: create from scratch with correct SHORTS form values
+                # Override settings for SHORTS from-scratch creation
+                campaign.settings.ad_format_type = "instream"
+                campaign.settings.format_type = ""
+                campaign.settings.ad_type = "video_file"
+                campaign.settings.ad_dimensions = "9:16"
+                campaign.settings.device = "mobile"
+                campaign_id, campaign_name = creator.create_campaign_from_scratch(campaign, variant)
+            elif variant == "desktop":
                 campaign_id, campaign_name = creator.create_desktop_campaign(campaign, geo)
             elif variant == "all_mobile":
                 # Use dedicated all_mobile template (mainly for remarketing)
@@ -121,23 +148,23 @@ def create_campaign_set(page, campaign: CampaignDefinition, csv_dir: Path, keep_
             else:
                 logger.warning(f"Unknown variant: {variant}")
                 continue
-            
+
             logger.info(f"✓ Created campaign: {campaign_name}")
             logger.info(f"  ID: {campaign_id}")
 
             # Upload CSV — don't replace sub11, TJ fills {CampaignName} dynamically
             # Skip for SHORTS — ads are baked into the template, no CSV upload needed
-            if has_csv and not keep_ads:
+            if has_csv and not keep_ads and not needs_from_scratch:
                 upload_csv_to_campaign(page, csv_path, None, ad_format)
             else:
                 logger.info(f"  Skipping CSV upload (ads baked into template)")
-            
+
             created_campaigns.append((campaign_id, campaign_name))
-            
+
         except Exception as e:
             logger.error(f"✗ Failed to create {variant} campaign: {e}")
             continue
-    
+
     return created_campaigns
 
 

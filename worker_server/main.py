@@ -25,7 +25,10 @@ from collections import deque
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
-from worker_server.models import CreateJobRequest, JobResponse, HealthResponse, AdCsvListResponse, VerifyRequest
+from worker_server.models import (
+    CreateJobRequest, JobResponse, HealthResponse, AdCsvListResponse,
+    MassAddCreativesRequest, MassAddCreativesResponse,
+)
 
 app = FastAPI(title="Campaign Builder Worker")
 
@@ -51,6 +54,7 @@ TEMPLATE_DIR = TJ_TOOL_DIR / "data" / "input" / "Template_Creation"
 V4_SCRIPT = TJ_TOOL_DIR / "create_campaigns_v4.py"
 V4_DIR = TJ_TOOL_DIR / "data" / "output" / "V4_Campaign_Export"
 SESSION_FILE = TJ_TOOL_DIR / "data" / "session" / "tj_session.json"
+MASS_ADD_SCRIPT = TJ_TOOL_DIR / "mass_add_creatives.py"
 LOG_DIR = TJ_TOOL_DIR / "logs"
 
 # Regex patterns for log parsing
@@ -58,6 +62,11 @@ ID_PATTERN = re.compile(r'(?:^|\s)ID:\s*(\d+)')
 TOTAL_PATTERN = re.compile(r'Found\s+(\d+)\s+enabled\s+campaign')
 VARIANT_TOTAL_PATTERN = re.compile(r'TOTAL:\s*\d+\s*campaign rows\s*->\s*(\d+)\s*campaign variants')
 CAMPAIGN_CSV_PATTERN = re.compile(r'Campaign CSV:\s*(.+)')
+
+# Mass-add log patterns
+MASS_ADD_RESULT_PATTERN = re.compile(r'^MASS_ADD_RESULT\|([^|]+)\|([^|]+)\|([^|]*)\|(.*)$')
+MASS_ADD_PROGRESS_PATTERN = re.compile(r'^MASS_ADD_PROGRESS\|(\d+)\|(\d+)$')
+MASS_ADD_SUMMARY_PATTERN = re.compile(r'^MASS_ADD_SUMMARY\|(\d+)\|(\d+)\|(\d+)\|(\d+)$')
 
 
 def _get_ad_csvs() -> dict[str, list[str]]:
@@ -99,7 +108,7 @@ def _extract_multilingual_params(csv_content: str) -> dict:
     return {"ad_format": "NATIVE", "group": "i18n"}
 
 
-def _build_command(csv_path: str, csv_content: str, dry_run: bool, flow: str | None = None, name_prefix: str = "") -> tuple[list[str], str, str]:
+def _build_command(csv_path: str, csv_content: str, dry_run: bool, flow: str | None = None) -> tuple[list[str], str, str]:
     """Build the command to run based on CSV format.
 
     Returns (command, flow_used, flow_source) where flow_source is 'explicit' or 'auto-detected'.
@@ -132,8 +141,6 @@ def _build_command(csv_path: str, csv_content: str, dry_run: bool, flow: str | N
             ]
     elif fmt == "v4":
         cmd = [sys.executable, str(V4_SCRIPT), csv_path, "--live"]
-        if name_prefix:
-            cmd.extend(["--prefix", name_prefix])
         if dry_run:
             cmd.append("--dry-run")
     elif fmt == "template":
@@ -252,9 +259,9 @@ def _parse_log_file(log_path: Path) -> tuple[list[str], list[str], int]:
 # SINGLE-PROCESS JOB (original behavior, used for workers=1 or dry_run)
 # ============================================================================
 
-def _run_job_single(job_id: str, csv_path: str, csv_content: str, dry_run: bool, flow: str | None = None, name_prefix: str = ""):
+def _run_job_single(job_id: str, csv_path: str, csv_content: str, dry_run: bool, flow: str | None = None):
     """Run campaign creation in a single subprocess (background thread)."""
-    cmd, flow_used, flow_source = _build_command(csv_path, csv_content, dry_run, flow, name_prefix)
+    cmd, flow_used, flow_source = _build_command(csv_path, csv_content, dry_run, flow)
 
     with job_lock:
         jobs[job_id]["status"] = "running"
@@ -267,7 +274,7 @@ def _run_job_single(job_id: str, csv_path: str, csv_content: str, dry_run: bool,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
-            env={**os.environ, "WORKER_ID": "galactus"},
+            env={**os.environ, "WORKER_ID": "galactus", "PYTHONUNBUFFERED": "1"},
         )
         with job_lock:
             jobs[job_id]["processes"] = [proc]
@@ -316,9 +323,9 @@ def _run_job_single(job_id: str, csv_path: str, csv_content: str, dry_run: bool,
 # ============================================================================
 
 def _run_job_parallel(job_id: str, csv_path: str, csv_content: str, dry_run: bool,
-                      flow: str | None, num_workers: int, name_prefix: str = ""):
+                      flow: str | None, num_workers: int):
     """Run campaign creation across multiple parallel browser workers."""
-    _, flow_used, flow_source = _build_command(csv_path, csv_content, dry_run, flow, name_prefix)
+    _, flow_used, flow_source = _build_command(csv_path, csv_content, dry_run, flow)
     actual_flow = flow_used
 
     with job_lock:
@@ -353,7 +360,7 @@ def _run_job_parallel(job_id: str, csv_path: str, csv_content: str, dry_run: boo
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
-                env={**os.environ, "WORKER_ID": "galactus"},
+                env={**os.environ, "WORKER_ID": "galactus", "PYTHONUNBUFFERED": "1"},
             )
             with job_lock:
                 jobs[job_id]["processes"] = [translate_proc]
@@ -438,8 +445,6 @@ def _run_job_parallel(job_id: str, csv_path: str, csv_content: str, dry_run: boo
                     cmd.append("--dry-run")
             elif actual_flow == "v4":
                 cmd = [sys.executable, str(V4_SCRIPT), str(chunk_csv), "--live"]
-                if name_prefix:
-                    cmd.extend(["--prefix", name_prefix])
                 if dry_run:
                     cmd.append("--dry-run")
             elif actual_flow == "template":
@@ -597,6 +602,96 @@ def _run_job_parallel(job_id: str, csv_path: str, csv_content: str, dry_run: boo
 
 
 # ============================================================================
+# MASS ADD CREATIVES JOB
+# ============================================================================
+
+def _run_mass_add_job(job_id: str, campaign_ids: list[str], csv_file: str,
+                      ad_format: str, dry_run: bool):
+    """Run mass_add_creatives.py in a subprocess and parse structured output."""
+    cmd = [
+        sys.executable, str(MASS_ADD_SCRIPT),
+        "--campaign-ids", ",".join(campaign_ids),
+        "--csv-file", csv_file,
+        "--ad-format", ad_format,
+        "--use-session",
+        "--session-file", str(SESSION_FILE),
+    ]
+    if dry_run:
+        cmd.append("--dry-run")
+
+    with job_lock:
+        jobs[job_id]["status"] = "running"
+        jobs[job_id]["log_lines"] = [f"Command: {' '.join(cmd)}"]
+
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(TJ_TOOL_DIR),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            env={**os.environ, "WORKER_ID": "galactus", "PYTHONUNBUFFERED": "1"},
+        )
+        with job_lock:
+            jobs[job_id]["processes"] = [proc]
+
+        log_lines: deque[str] = deque(maxlen=500)
+
+        for line in proc.stdout:  # type: ignore[union-attr]
+            line = line.rstrip()
+            log_lines.append(line)
+
+            # Parse structured output
+            m_result = MASS_ADD_RESULT_PATTERN.match(line)
+            if m_result:
+                cid, status, ads_created, error = m_result.groups()
+                with job_lock:
+                    jobs[job_id]["campaign_results"].append({
+                        "campaign_id": cid,
+                        "status": status,
+                        "ads_created": int(ads_created) if ads_created else 0,
+                        "error": error or None,
+                    })
+                    if status == "success":
+                        jobs[job_id]["succeeded"] += 1
+                    elif status in ("failed", "error"):
+                        jobs[job_id]["failed"] += 1
+                    elif status == "skipped":
+                        jobs[job_id]["skipped"] += 1
+
+            m_progress = MASS_ADD_PROGRESS_PATTERN.match(line)
+            if m_progress:
+                completed, total = m_progress.groups()
+                with job_lock:
+                    jobs[job_id]["completed_campaigns"] = int(completed)
+
+            m_summary = MASS_ADD_SUMMARY_PATTERN.match(line)
+            if m_summary:
+                total, succeeded, failed, skipped = m_summary.groups()
+                with job_lock:
+                    jobs[job_id]["succeeded"] = int(succeeded)
+                    jobs[job_id]["failed"] = int(failed)
+                    jobs[job_id]["skipped"] = int(skipped)
+
+            with job_lock:
+                jobs[job_id]["log_lines"] = list(log_lines)
+
+        proc.wait()
+
+        with job_lock:
+            if proc.returncode == 0:
+                jobs[job_id]["status"] = "completed"
+            else:
+                jobs[job_id]["status"] = "failed"
+                jobs[job_id]["error"] = f"Process exited with code {proc.returncode}"
+
+    except Exception as e:
+        with job_lock:
+            jobs[job_id]["status"] = "failed"
+            jobs[job_id]["error"] = str(e)
+
+
+# ============================================================================
 # API ENDPOINTS
 # ============================================================================
 
@@ -682,10 +777,10 @@ def create_job(req: CreateJobRequest):
     # Choose single or parallel execution
     if num_workers <= 1 or req.dry_run:
         target = _run_job_single
-        args = (job_id, str(csv_path), req.csv_content, req.dry_run, req.flow, req.name_prefix)
+        args = (job_id, str(csv_path), req.csv_content, req.dry_run, req.flow)
     else:
         target = _run_job_parallel
-        args = (job_id, str(csv_path), req.csv_content, req.dry_run, req.flow, num_workers, req.name_prefix)
+        args = (job_id, str(csv_path), req.csv_content, req.dry_run, req.flow, num_workers)
 
     thread = threading.Thread(target=target, args=args, daemon=True)
     thread.start()
@@ -742,42 +837,85 @@ def cancel_job(job_id: str):
     return {"message": "Job is not running"}
 
 
-# ── Post-Creation Verification ────────────────────────────────
+# ============================================================================
+# MASS ADD CREATIVES ENDPOINTS
+# ============================================================================
 
-@app.post("/verify")
-def verify_campaigns_endpoint(req: VerifyRequest):
-    """Run post-creation verification against live TJ campaigns."""
-    import tempfile
+@app.post("/jobs/mass-add-creatives", response_model=MassAddCreativesResponse)
+def create_mass_add_job(req: MassAddCreativesRequest):
+    # Validate ad format
+    if req.ad_format.upper() not in ("NATIVE", "INSTREAM"):
+        raise HTTPException(status_code=400, detail="ad_format must be NATIVE or INSTREAM")
 
-    csv_path = Path(tempfile.mktemp(suffix=".csv", prefix="verify_"))
-    csv_path.write_text(req.csv_content)
+    # Validate CSV file exists
+    csv_path = CAMPAIGN_CREATION_DIR / req.csv_file
+    if not csv_path.exists():
+        raise HTTPException(
+            status_code=400,
+            detail=f"Ad CSV file not found: {req.csv_file}. Available: {_get_ad_csvs().get('Campaign_Creation', [])}",
+        )
 
-    ids_str = ",".join(req.campaign_ids)
-    verify_script = Path(__file__).parent / "verify_campaigns.py"
-
-    if not verify_script.exists():
-        csv_path.unlink(missing_ok=True)
-        raise HTTPException(status_code=500, detail=f"verify_campaigns.py not found")
-
-    verify_id = f"verify_{req.job_id or 'manual'}_{int(time.time())}"
-    log_path = Path(f"/tmp/{verify_id}.log")
-
-    def _run_verify():
-        try:
-            result = subprocess.run(
-                [sys.executable, str(verify_script), str(csv_path), "--ids", ids_str],
-                capture_output=True, text=True, timeout=600,
-                cwd=str(verify_script.parent),
+    # Check max concurrent jobs
+    with job_lock:
+        running = sum(1 for j in jobs.values() if j["status"] in ("pending", "running"))
+        if running >= 1:
+            raise HTTPException(
+                status_code=429,
+                detail="Worker is busy. Max 1 concurrent job allowed.",
             )
-            log_path.write_text(
-                f"STDOUT:\n{result.stdout}\n\nSTDERR:\n{result.stderr}\n\nEXIT: {result.returncode}"
-            )
-        except Exception as e:
-            log_path.write_text(f"ERROR: {e}")
-        finally:
-            csv_path.unlink(missing_ok=True)
 
-    thread = threading.Thread(target=_run_verify, daemon=True)
+    if not req.campaign_ids:
+        raise HTTPException(status_code=400, detail="campaign_ids cannot be empty")
+
+    job_id = str(uuid.uuid4())
+    total = len(req.campaign_ids)
+
+    with job_lock:
+        jobs[job_id] = {
+            "type": "mass_add_creatives",
+            "status": "pending",
+            "total_campaigns": total,
+            "completed_campaigns": 0,
+            "succeeded": 0,
+            "failed": 0,
+            "skipped": 0,
+            "campaign_results": [],
+            "log_lines": [],
+            "error": None,
+            "processes": [],
+            "csv_file": req.csv_file,
+            "ad_format": req.ad_format.upper(),
+        }
+
+    thread = threading.Thread(
+        target=_run_mass_add_job,
+        args=(job_id, req.campaign_ids, req.csv_file, req.ad_format.upper(), req.dry_run),
+        daemon=True,
+    )
     thread.start()
 
-    return {"verify_job_id": verify_id, "log_path": str(log_path)}
+    return MassAddCreativesResponse(
+        job_id=job_id,
+        status="pending",
+        total_campaigns=total,
+    )
+
+
+@app.get("/jobs/mass-add-creatives/{job_id}", response_model=MassAddCreativesResponse)
+def get_mass_add_job(job_id: str):
+    with job_lock:
+        job = jobs.get(job_id)
+    if not job or job.get("type") != "mass_add_creatives":
+        raise HTTPException(status_code=404, detail="Mass-add job not found")
+    return MassAddCreativesResponse(
+        job_id=job_id,
+        status=job["status"],
+        total_campaigns=job["total_campaigns"],
+        completed_campaigns=job["completed_campaigns"],
+        succeeded=job["succeeded"],
+        failed=job["failed"],
+        skipped=job["skipped"],
+        campaign_results=job["campaign_results"],
+        log_lines=job["log_lines"],
+        error=job.get("error"),
+    )

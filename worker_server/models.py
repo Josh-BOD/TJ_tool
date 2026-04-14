@@ -10,7 +10,6 @@ class CreateJobRequest(BaseModel):
     filename: str = "campaign_builder_input.csv"
     flow: Optional[str] = None  # "multilingual", "standard", "template", "v4", "shorts", or None for auto-detect
     workers: int = 4  # 1-4 parallel browser workers
-    name_prefix: str = ""
 
 
 class JobResponse(BaseModel):
@@ -35,7 +34,21 @@ class AdCsvListResponse(BaseModel):
     csv_files: dict[str, list[str]]
 
 
-class VerifyRequest(BaseModel):
-    csv_content: str
+class MassAddCreativesRequest(BaseModel):
     campaign_ids: list[str]
-    job_id: str = ""
+    csv_file: str  # filename in data/input/Campaign_Creation/
+    ad_format: str  # NATIVE or INSTREAM
+    dry_run: bool = False
+
+
+class MassAddCreativesResponse(BaseModel):
+    job_id: str
+    status: str  # pending, running, completed, failed, cancelled
+    total_campaigns: int = 0
+    completed_campaigns: int = 0
+    succeeded: int = 0
+    failed: int = 0
+    skipped: int = 0
+    campaign_results: list[dict] = []
+    log_lines: list[str] = []
+    error: Optional[str] = None

@@ -87,7 +87,6 @@ class V4CampaignConfig:
     cpm_adjust: Optional[float] = None # percentage adjustment to suggested CPM
     cpm_bid_mode: str = ""             # "suggested" (default), "min", or "static"
     cpm_bid_value: Optional[float] = None  # percentage for suggested/min, dollar amount for static
-    cpm_flat_add: Optional[float] = None   # flat dollar amount to add on top of min CPM
     include_all_sources: bool = True
     automation_rules: str = ""         # JSON or named rule preset
 

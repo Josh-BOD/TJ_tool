@@ -201,7 +201,11 @@ class CampaignDefinition:
     enabled: bool = True
     mobile_combined: bool = False  # True when using "all mobile" variant (iOS + Android in same campaign)
     test_number: Optional[str] = None  # Test number for naming (e.g., "12" becomes "_T-12")
-    
+    campaign_name_override: Optional[str] = None  # If set, use this name instead of auto-generating
+    interests: List[str] = field(default_factory=list)  # Segment targeting (e.g., ["Intent to buy VOD-Hentai"])
+    negative_interests: List[str] = field(default_factory=list)  # Excluded segments (e.g., ["Intent to buy AI"])
+    negative_keywords: List[Keyword] = field(default_factory=list)  # Excluded keywords
+
     # Status tracking
     status: CampaignStatus = CampaignStatus.PENDING
     variant_statuses: Dict[str, VariantStatus] = field(default_factory=dict)
@@ -275,6 +279,12 @@ class CampaignDefinition:
             "enabled": self.enabled,
             "mobile_combined": self.mobile_combined,
             "test_number": self.test_number,
+            "interests": self.interests,
+            "negative_interests": self.negative_interests,
+            "negative_keywords": [
+                {"name": kw.name, "match_type": kw.match_type.value}
+                for kw in self.negative_keywords
+            ],
             "status": self.status.value,
             "variant_statuses": {
                 variant: vs.to_dict()
@@ -334,6 +344,15 @@ class CampaignDefinition:
                 completed_at=vs_data.get("completed_at")
             )
         
+        # Parse negative keywords
+        negative_keywords = [
+            Keyword(
+                name=kw["name"],
+                match_type=MatchType(kw["match_type"])
+            )
+            for kw in data.get("negative_keywords", [])
+        ]
+
         return CampaignDefinition(
             group=data["group"],
             keywords=keywords,
@@ -344,6 +363,9 @@ class CampaignDefinition:
             enabled=data.get("enabled", True),
             mobile_combined=data.get("mobile_combined", False),
             test_number=data.get("test_number"),
+            interests=data.get("interests", []),
+            negative_interests=data.get("negative_interests", []),
+            negative_keywords=negative_keywords,
             status=CampaignStatus(data.get("status", "pending")),
             variant_statuses=variant_statuses
         )

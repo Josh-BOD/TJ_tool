@@ -145,7 +145,7 @@ class CSVParser:
         "ad_type": "rollover",  # Options: "static_banner", "video_banner", "rollover"
         "ad_dimensions": "640x360",  # Options: "300x250", "950x250", "468x60", "305x99", "300x100", "970x90", "320x480", "640x360"
         "content_category": "straight",  # Options: "straight", "gay", "trans"
-        "language": "EN",  # Language code (e.g., "EN", "ES", "DE")
+        "language": "",  # Language code (e.g., "EN", "ES", "DE"). Empty = all languages
     }
     
     # Valid values for campaign type and bidding
@@ -164,7 +164,9 @@ class CSVParser:
         # Display/Native dimensions
         "300x250", "950x250", "468x60", "305x99", "300x100", "970x90", "320x480", "640x360",
         # PreRoll dimensions
-        "pre-roll (16:9)", "preroll (16:9)", "16:9"
+        "pre-roll (16:9)", "preroll (16:9)", "16:9",
+        # Shorties dimensions
+        "9:16",
     }
     VALID_CONTENT_CATEGORIES = {"straight", "gay", "trans"}
     
@@ -190,6 +192,7 @@ class CSVParser:
         "preroll (16:9)": "640x360",
         "16:9": "640x360",
         "640x360": "640x360",
+        "9:16": "9:16",  # Shorties In-Stream 9:16
     }
     
     def __init__(self, csv_path: Path):
@@ -279,8 +282,8 @@ class CSVParser:
         Returns:
             List of CampaignDefinition objects
         """
-        # Normalize keys (strip whitespace, lowercase)
-        row = {k.strip().lower(): v.strip() for k, v in row.items()}
+        # Normalize keys (strip whitespace, lowercase) — handle None values
+        row = {k.strip().lower(): (v.strip() if v else "") for k, v in row.items() if k}
         
         # Skip empty rows
         if not any(row.values()):
@@ -292,7 +295,7 @@ class CSVParser:
         # Parse required fields
         group = self._get_required(row, "group")
         keywords = self._parse_keywords(row)
-        csv_file = self._get_required(row, "csv_file")
+        csv_file = row.get("csv_file", "").strip()  # Optional for SHORTS (ads baked into template)
         variants = self._parse_variants(row)
         
         # Check if multi_geo is specified
@@ -394,7 +397,7 @@ class CSVParser:
             ad_type=ad_type,
             ad_dimensions=ad_dimensions,
             content_category=content_category,
-            language=row.get("language", "EN").strip().upper()
+            language=row.get("language", "").strip().upper()
         )
         
         # Parse test number (can be numeric or alphanumeric like "12", "12A", "V2", etc.)
@@ -429,6 +432,24 @@ class CSVParser:
                 if variant not in expanded_variants:
                     expanded_variants.append(variant)
         
+        # Campaign name override from CSV (use exact name instead of auto-generating)
+        name_override = row.get("campaign_name", "").strip() or None
+
+        # Parse interests (segment targeting) — comma-separated
+        interests_str = row.get("interests", "").strip()
+        interests = [i.strip() for i in interests_str.split(",") if i.strip()] if interests_str else []
+
+        # Parse negative interests (excluded segments) — comma-separated
+        negative_interests_str = row.get("negative_interests", "").strip()
+        negative_interests = [i.strip() for i in negative_interests_str.split(",") if i.strip()] if negative_interests_str else []
+
+        # Parse negative keywords — semicolon-separated (same as regular keywords)
+        negative_keywords_str = row.get("negative_keywords", "").strip()
+        negative_keywords = [
+            Keyword(name=k.strip(), match_type=MatchType.EXACT)
+            for k in negative_keywords_str.split(";") if k.strip()
+        ] if negative_keywords_str else []
+
         if multi_geo_str:
             # Mode 1: Create separate campaigns for each geo
             # Support both semicolon and comma separators
@@ -436,10 +457,10 @@ class CSVParser:
                 geo_codes = [g.strip().upper() for g in multi_geo_str.split(",") if g.strip()]
             else:
                 geo_codes = [g.strip().upper() for g in multi_geo_str.split(";") if g.strip()]
-            
+
             if not geo_codes:
                 raise CSVParseError("multi_geo specified but no geo codes provided")
-            
+
             for geo_code in geo_codes:
                 campaign = CampaignDefinition(
                     group=group,
@@ -450,7 +471,11 @@ class CSVParser:
                     settings=settings,
                     enabled=enabled,
                     mobile_combined=mobile_combined,
-                    test_number=test_number
+                    test_number=test_number,
+                    campaign_name_override=name_override,
+                    interests=interests,
+                    negative_interests=negative_interests,
+                    negative_keywords=negative_keywords,
                 )
                 campaigns.append(campaign)
         else:
@@ -465,7 +490,11 @@ class CSVParser:
                 settings=settings,
                 enabled=enabled,
                 mobile_combined=mobile_combined,
-                test_number=test_number
+                test_number=test_number,
+                campaign_name_override=name_override,
+                interests=interests,
+                negative_interests=negative_interests,
+                negative_keywords=negative_keywords,
             )
             campaigns.append(campaign)
         

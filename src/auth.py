@@ -1,7 +1,8 @@
 """Authentication module for TrafficJunky platform."""
 
-import logging
 import json
+import logging
+import time
 from pathlib import Path
 from typing import Optional
 from playwright.sync_api import Page, Browser, BrowserContext, TimeoutError as PlaywrightTimeout
@@ -280,7 +281,209 @@ class TJAuthenticator:
         except Exception as e:
             logger.error(f"Failed to load session: {e}")
             return None
-    
+
+    def google_oauth_login(self, page: Page, google_session_file: Optional[str] = None, timeout: int = 90) -> bool:
+        """
+        Log into TJ via Google OAuth.
+
+        Requires:
+          - Google account already linked to TJ (one-time setup via web UI)
+
+        Flow:
+          1. Optionally load Google cookies into browser context (speeds up auto-auth)
+          2. Go to TJ sign-in page, accept cookie consent
+          3. Click the Google login button (must use the button — direct URL needs CSRF)
+          4. If Google cookies are valid → auto-authenticates via popup
+          5. If Google cookies are expired → enters email/password in popup
+          6. TJ creates a fresh session
+
+        Args:
+            page: Playwright page object
+            google_session_file: Path to Google storageState JSON. If None,
+                looks for /tmp/google_session.json or data/session/google_session.json.
+            timeout: Max seconds to wait for OAuth redirect chain to complete.
+
+        Returns:
+            True if login successful, False otherwise.
+        """
+        import os
+
+        google_email = os.environ.get("GOOGLE_EMAIL", "")
+        google_password = os.environ.get("GOOGLE_PASSWORD", "")
+
+        try:
+            # Resolve and load Google session file (optional — speeds up auth)
+            if google_session_file is None:
+                candidates = [
+                    Path("/tmp/google_session.json"),
+                    self.session_dir / "google_session.json",
+                ]
+                for candidate in candidates:
+                    if candidate.exists():
+                        google_session_file = str(candidate)
+                        break
+
+            has_google_cookies = False
+            if google_session_file and Path(google_session_file).exists():
+                logger.info(f"Loading Google cookies from {google_session_file}...")
+                try:
+                    google_state = json.loads(Path(google_session_file).read_text())
+                    google_cookies = google_state.get("cookies", [])
+                    if google_cookies:
+                        page.context.add_cookies(google_cookies)
+                        has_google_cookies = True
+                        logger.info(f"Loaded {len(google_cookies)} Google cookies")
+                except Exception as e:
+                    logger.warning(f"Failed to load Google cookies: {e}")
+
+            if not has_google_cookies and not google_email:
+                logger.warning("Google OAuth skipped — no cookies and no GOOGLE_EMAIL in env")
+                return False
+
+            # Accept TJ cookie consent first
+            logger.info("Accepting TJ cookie consent...")
+            page.goto("https://www.trafficjunky.com/", wait_until="domcontentloaded", timeout=15000)
+            page.wait_for_timeout(2000)
+            try:
+                accept_btn = page.locator('button:has-text("Accept All")')
+                if accept_btn.is_visible(timeout=3000):
+                    accept_btn.click()
+                    page.wait_for_timeout(1000)
+            except Exception:
+                pass
+
+            # Go to TJ sign-in page and click the Google login button
+            logger.info("Going to TJ sign-in page...")
+            page.goto("https://www.trafficjunky.com/sign-in", wait_until="domcontentloaded", timeout=15000)
+            page.wait_for_timeout(3000)
+
+            google_btn = page.locator('a:has-text("Google")').first
+            if not google_btn.is_visible(timeout=5000):
+                logger.warning("Google login button not found on TJ sign-in page")
+                return False
+
+            # Google button opens a popup for OAuth — listen for it
+            logger.info("Clicking Google login button...")
+            with page.context.expect_page(timeout=15000) as popup_info:
+                google_btn.click()
+
+            popup = popup_info.value
+            logger.info(f"OAuth popup opened: {popup.url[:100]}")
+
+            # Handle the Google popup — could be account chooser, login form, or auto-redirect
+            try:
+                popup.wait_for_load_state("domcontentloaded", timeout=10000)
+
+                if "accounts.google.com" in popup.url:
+                    # Case 1: Account chooser — click the right account
+                    email_option = popup.locator('[data-email]').first
+                    try:
+                        if email_option.is_visible(timeout=3000):
+                            logger.info("Google account chooser — clicking account...")
+                            email_option.click()
+                            popup.wait_for_timeout(3000)
+                    except Exception:
+                        pass
+
+                    # Case 2: Email input — Google wants full login
+                    try:
+                        email_input = popup.locator('input[type="email"]')
+                        if email_input.is_visible(timeout=3000):
+                            if not google_email:
+                                logger.warning("Google login form shown but no GOOGLE_EMAIL in env")
+                                return False
+                            logger.info("Google login form — entering email...")
+                            email_input.click()
+                            email_input.fill(google_email)
+                            popup.wait_for_timeout(500)
+                            popup.keyboard.press("Enter")
+                            logger.info("Email submitted, waiting for password page...")
+                            popup.wait_for_timeout(4000)
+
+                            # Wait for password page
+                            password_input = popup.locator('input[type="password"]')
+                            try:
+                                password_input.wait_for(state="visible", timeout=15000)
+                            except Exception:
+                                # Might have been auto-approved or redirected
+                                pass
+
+                            if password_input.is_visible(timeout=3000):
+                                if not google_password:
+                                    logger.warning("Google password page shown but no GOOGLE_PASSWORD in env")
+                                    return False
+                                logger.info("Google login form — entering password...")
+                                password_input.click()
+                                password_input.fill(google_password)
+                                popup.wait_for_timeout(500)
+                                popup.keyboard.press("Enter")
+                                logger.info("Password submitted, waiting for redirect...")
+                                popup.wait_for_timeout(5000)
+                    except Exception as login_err:
+                        logger.warning(f"Google login form handling: {login_err}")
+
+                    # Case 3: Consent/allow screen — click "Allow" or "Continue"
+                    try:
+                        allow_btn = popup.locator('button:has-text("Allow"), button:has-text("Continue")')
+                        if allow_btn.is_visible(timeout=3000):
+                            logger.info("Google consent screen — clicking Allow...")
+                            allow_btn.click()
+                            popup.wait_for_timeout(3000)
+                    except Exception:
+                        pass
+
+            except Exception as e:
+                logger.info(f"Popup handling completed or popup closed: {e}")
+
+            # Wait for popup to close and main page to navigate to dashboard.
+            logger.info("Waiting for OAuth to complete...")
+            try:
+                page.wait_for_url("**advertiser.trafficjunky.com**", timeout=timeout * 1000)
+            except Exception:
+                pass
+
+            # Check final state — use JS evaluation for reliable URL
+            page.wait_for_timeout(3000)
+            try:
+                actual_url = page.evaluate("() => window.location.href")
+                if "advertiser.trafficjunky.com" in actual_url:
+                    logger.info(f"Google OAuth login successful — {actual_url}")
+                    self.is_authenticated = True
+                    # Save updated Google cookies for next time
+                    self._save_google_cookies(page.context, google_session_file)
+                    return True
+            except Exception:
+                pass
+
+            # Fallback: check page.url too
+            try:
+                if "advertiser.trafficjunky.com" in page.url:
+                    logger.info(f"Google OAuth login successful — {page.url}")
+                    self.is_authenticated = True
+                    self._save_google_cookies(page.context, google_session_file)
+                    return True
+            except Exception:
+                pass
+
+            logger.error(f"Google OAuth login timed out after {timeout}s — final URL: {page.url}")
+            return False
+
+        except Exception as e:
+            logger.error(f"Google OAuth login failed: {e}")
+            return False
+
+    def _save_google_cookies(self, context: BrowserContext, google_session_file: Optional[str] = None) -> None:
+        """Save fresh Google cookies back to session file for next login."""
+        try:
+            cookies = context.cookies(["https://accounts.google.com", "https://www.google.com"])
+            if not cookies:
+                return
+            save_path = google_session_file or "/tmp/google_session.json"
+            Path(save_path).write_text(json.dumps({"cookies": cookies}, indent=2))
+            logger.info(f"Saved {len(cookies)} Google cookies to {save_path}")
+        except Exception as e:
+            logger.warning(f"Failed to save Google cookies: {e}")
+
     def manual_login(self, page: Page, timeout: int = 120) -> bool:
         """
         Wait for user to manually log in.

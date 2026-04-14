@@ -50,6 +50,19 @@ TEMPLATE_CAMPAIGNS = {
             "device": "mobile",
             "os": "Android"
         }
+    },
+    "SHORTS": {
+        "ios": {
+            "id": "1013387511",
+            "name": "TEMP_EN_Shorts_CPM_PH_BROAD_IOS_MF_JB",
+            "device": "mobile",
+            "os": "iOS"
+        },
+        "android": {
+            "clone_from": "ios",
+            "device": "mobile",
+            "os": "Android"
+        }
     }
 }
 
@@ -142,6 +155,16 @@ BUILTIN_TEMPLATES = {
             },
         },
     },
+    "SHORTS": {
+        "Standard": {
+            "straight": {
+                "ios": {"id": "1013387511", "name": "TEMP_EN_Shorts_CPM_PH_BROAD_IOS_MF_JB"},
+                "android": {"clone_from": "ios"},
+            },
+            # gay/trans SHORTS not yet created — fall back to straight
+        },
+        # Remarketing SHORTS not yet created
+    },
 }
 
 # Legacy template campaigns (for backward compatibility with V1)
@@ -189,7 +212,9 @@ def generate_campaign_name(
     test_number: str = None,
     campaign_type: str = "Standard",
     geo_name: str = None,
-    content_category: str = "straight"
+    content_category: str = "straight",
+    smart_bidder: str = "",
+    retargeting_type: str = "",
 ) -> str:
     """
     Generate campaign name following TrafficJunky naming convention.
@@ -214,12 +239,19 @@ def generate_campaign_name(
 
     # Capitalize keyword for name (use "Broad" if empty/no keyword targeting)
     if keyword and keyword.strip() and keyword.lower() != "unknown":
-        keyword_title = keyword.title().replace(" ", "")
+        # Preserve KEY-/INT- prefix casing, title-case the rest
+        kw = keyword.strip()
+        if kw.upper().startswith(("KEY-", "INT-")):
+            prefix = kw[:4].upper()
+            rest = kw[4:].strip()
+            keyword_title = prefix + (rest.upper() if len(rest) <= 3 else rest.title().replace(" ", ""))
+        else:
+            keyword_title = kw.title().replace(" ", "")
     else:
         keyword_title = "Broad"
 
-    # Convert gender to abbreviation (ALL = MF for Male+Female)
-    gender_map = {"male": "M", "female": "F", "all": "MF"}
+    # Convert gender to abbreviation
+    gender_map = {"male": "M", "female": "F", "all": "ALL"}
     gender_abbr = gender_map.get(gender.lower(), "M")
 
     # Convert device to abbreviation
@@ -231,6 +263,18 @@ def generate_campaign_name(
 
     # Convert ad_format for campaign name (INSTREAM -> PREROLL)
     ad_format_name = "PREROLL" if ad_format.upper() == "INSTREAM" else ad_format.upper()
+
+    # Prefix bid_type with "s" when smart bidder is active
+    if smart_bidder:
+        sb = smart_bidder.lower()
+        if sb == "smart_cpm":
+            bid_type = f"s{bid_type}"    # CPM → sCPM
+        elif sb == "smart_cpa":
+            bid_type = f"s{bid_type}"    # CPA → sCPA
+
+    # Map retargeting type to abbreviation
+    retargeting_abbr_map = {"click": "ClK", "impression": "Imp"}
+    retargeting_abbr = retargeting_abbr_map.get((retargeting_type or "").lower(), "")
 
     # Build targeting part based on campaign_type + content_category
     cat = (content_category or "straight").lower()
@@ -244,14 +288,22 @@ def generate_campaign_name(
         # straight
         if is_remarketing:
             targeting_part = "Remarketing"
+        elif keyword_title.upper().startswith(("KEY-", "INT-")):
+            targeting_part = keyword_title  # already has prefix
         else:
             targeting_part = f"KEY-{keyword_title}"
 
-    # Build base name
-    base_name = (
-        f"{geo_str}_{language}_{ad_format_name}_{bid_type}_{source}_"
-        f"{targeting_part}_{device_abbr}_{gender_abbr}_{user_initials}"
-    )
+    # Build base name (insert retargeting abbreviation before targeting if present)
+    if retargeting_abbr:
+        base_name = (
+            f"{geo_str}_{language}_{ad_format_name}_{bid_type}_{source}_"
+            f"{retargeting_abbr}_{targeting_part}_{device_abbr}_{gender_abbr}_{user_initials}"
+        )
+    else:
+        base_name = (
+            f"{geo_str}_{language}_{ad_format_name}_{bid_type}_{source}_"
+            f"{targeting_part}_{device_abbr}_{gender_abbr}_{user_initials}"
+        )
 
     # Add test number suffix if provided
     if test_number:
@@ -264,7 +316,7 @@ def generate_campaign_name(
 VALID_DEVICES = ["desktop", "ios", "android", "all_mobile"]
 VALID_GENDERS = ["male", "female", "all"]
 VALID_MATCH_TYPES = ["broad", "exact"]
-VALID_AD_FORMATS = ["NATIVE", "INSTREAM"]
+VALID_AD_FORMATS = ["NATIVE", "INSTREAM", "SHORTS"]
 VALID_CAMPAIGN_TYPES = ["Standard", "Remarketing"]
 VALID_BID_TYPES = ["CPA", "CPM"]
 
@@ -396,7 +448,7 @@ def get_templates(ad_format: str, campaign_type: str = "Standard", content_categ
         raise ValueError(f"Invalid campaign type: {campaign_type}. Must be one of {VALID_CAMPAIGN_TYPES}")
 
     # Map ad_format to template label (INSTREAM -> PREROLL in templates.json)
-    label_map = {"NATIVE": "NATIVE", "INSTREAM": "PREROLL"}
+    label_map = {"NATIVE": "NATIVE", "INSTREAM": "PREROLL", "SHORTS": "SHORTS"}
     template_label = label_map.get(ad_format, ad_format)
 
     # Helper to look up category templates from a nested dict
@@ -433,8 +485,10 @@ def get_templates(ad_format: str, campaign_type: str = "Standard", content_categ
         f"No category-aware templates for {template_label}/{campaign_type_title}/{content_category}. "
         f"Using legacy fallback (straight only)."
     )
-    if campaign_type_title == "Remarketing":
+    if campaign_type_title == "Remarketing" and ad_format in REMARKETING_TEMPLATES:
         return REMARKETING_TEMPLATES[ad_format]
-    else:
+    elif ad_format in TEMPLATE_CAMPAIGNS:
         return TEMPLATE_CAMPAIGNS[ad_format]
+    else:
+        raise ValueError(f"No templates available for {ad_format}/{campaign_type_title}/{content_category}")
 

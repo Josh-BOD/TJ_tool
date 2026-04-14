@@ -144,7 +144,6 @@ def _row_to_config(row: dict, row_num: int) -> V4CampaignConfig:
         cpm_adjust=_optional_float(g("cpm_adjust")),
         cpm_bid_mode=g("cpm_bid_mode", "").lower(),
         cpm_bid_value=_optional_float(g("cpm_bid_value")),
-        cpm_flat_add=_optional_float(g("cpm_flat_add")),
         include_all_sources=_bool(g("include_all_sources", "TRUE")),
         automation_rules=g("automation_rules"),
 
