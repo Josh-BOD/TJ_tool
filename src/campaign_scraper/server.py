@@ -189,21 +189,40 @@ def _worker_loop(worker_id: int, is_first: bool):
                 if _try_session_file():
                     return True
 
-                # Need manual_login — only one worker at a time
-                logger.info(f"{prefix} Waiting for manual_login lock...")
+                # Only one worker at a time does login — others wait and reload session
+                logger.info(f"{prefix} Waiting for auth lock...")
                 with _manual_login_lock:
-                    # Re-check session: another worker may have just logged in while we waited
+                    # Re-check session: another worker may have logged in while we waited
                     if _try_session_file():
                         logger.info(f"{prefix} Another worker already logged in, using session")
                         return True
 
-                    # We're the one that does manual_login
-                    logger.info(f"{prefix} Acquired lock, doing manual_login...")
+                    # We're the one that does login — try Google OAuth first
+                    logger.info(f"{prefix} Acquired lock, trying Google OAuth...")
                     if context:
                         try:
                             context.close()
                         except Exception:
                             pass
+                    context = browser.new_context()
+                    page = context.new_page()
+                    if auth_helper.google_oauth_login(page):
+                        auth_helper.save_session(context)
+                        is_authenticated = True
+                        logger.info(f"{prefix} Google OAuth successful, session saved")
+                        reuse_page = page
+                        return True
+
+                    # Google OAuth failed — fall back to manual_login
+                    logger.info(f"{prefix} Google OAuth failed, trying manual_login...")
+                    try:
+                        page.close()
+                    except Exception:
+                        pass
+                    try:
+                        context.close()
+                    except Exception:
+                        pass
                     context = browser.new_context()
                     page = context.new_page()
                     success = auth_helper.manual_login(page)
@@ -423,7 +442,36 @@ def _worker_loop(worker_id: int, is_first: bool):
                                     except Exception as sess_err:
                                         log(f"Session re-check error: {sess_err}")
 
-                                # Still no luck — we do the manual_login
+                                # Try Google OAuth before manual_login
+                                if not reauth_ok:
+                                    log("Trying Google OAuth re-auth...")
+                                    try:
+                                        persistent_page.close()
+                                    except Exception:
+                                        pass
+                                    try:
+                                        context.close()
+                                    except Exception:
+                                        pass
+                                    try:
+                                        browser.close()
+                                    except Exception:
+                                        pass
+                                    browser = pw.chromium.launch(headless=False)
+                                    context = browser.new_context()
+                                    persistent_page = context.new_page()
+                                    page = persistent_page
+                                    try:
+                                        if auth_helper.google_oauth_login(page):
+                                            auth_helper.save_session(context)
+                                            is_authenticated = True
+                                            reauth_ok = True
+                                            last_auth_time = time.time()
+                                            log("Re-auth via Google OAuth successful")
+                                    except Exception as oauth_err:
+                                        log(f"Google OAuth re-auth error: {oauth_err}")
+
+                                # Last resort — manual_login
                                 if not reauth_ok:
                                     for attempt in range(1, 5):
                                         log(f"Re-auth manual_login attempt {attempt}/4...")
@@ -539,6 +587,184 @@ def _worker_loop(worker_id: int, is_first: bool):
                             result=result.get("fields"),
                             ads=result.get("ads"),
                         ))
+
+                    elif job_type == "create_shorts":
+                        # Run SHORTS campaign creation using this authenticated page
+                        from campaign_automation_v2.csv_parser import CSVParser
+                        from campaign_automation_v2.creator_sync import CampaignCreator
+                        from campaign_templates import get_templates
+                        import csv as csv_module
+                        from io import StringIO
+                        from pathlib import Path as P
+
+                        # Redirect CampaignCreator logs to job log
+                        import logging as _logging
+                        class _JobLogHandler(_logging.Handler):
+                            def emit(self, record):
+                                log(record.getMessage())
+                        _ca_logger = _logging.getLogger("campaign_automation_v2.creator_sync")
+                        _jh = _JobLogHandler()
+                        _ca_logger.addHandler(_jh)
+                        _ca_logger.setLevel(_logging.INFO)
+
+                        csv_content = job_item["csv_content"]
+                        csv_path = P("/tmp") / f"shorts_{job_id[:8]}.csv"
+                        csv_path.write_text(csv_content)
+
+                        parser = CSVParser(csv_path)
+                        batch = parser.parse()
+                        enabled = batch.enabled_campaigns
+                        created = []
+
+                        for ci, campaign in enumerate(enabled, 1):
+                            ad_format = campaign.settings.ad_format
+                            content_category = campaign.settings.content_category
+                            needs_from_scratch = ad_format == "SHORTS" and content_category in ("gay", "trans")
+
+                            creator = CampaignCreator(
+                                page, ad_format=ad_format,
+                                campaign_type=campaign.settings.campaign_type,
+                                content_category=content_category,
+                                keep_ads=True,
+                            )
+
+                            for variant in campaign.variants:
+                                try:
+                                    log(f"Creating {ci}/{len(enabled)}: {campaign.campaign_name_override or campaign.group} - {variant.upper()}")
+                                    geo = campaign.geo[0] if campaign.geo else "US"
+
+                                    if needs_from_scratch:
+                                        campaign.settings.ad_format_type = "instream"
+                                        campaign.settings.format_type = ""
+                                        campaign.settings.ad_type = "video_file"
+                                        campaign.settings.ad_dimensions = "9:16"
+                                        campaign.settings.device = "mobile"
+                                        cid, cname = creator.create_campaign_from_scratch(campaign, variant)
+                                    elif variant == "ios":
+                                        cid, cname = creator.create_ios_campaign(campaign, geo)
+                                    elif variant == "android":
+                                        ios_id = next((c[0] for c in created if "_iOS_" in c[1] or "_ios_" in c[1].lower()), None)
+                                        if ios_id:
+                                            cid, cname = creator.create_android_campaign(campaign, geo, ios_id)
+                                        else:
+                                            log(f"No iOS to clone for Android, skipping")
+                                            continue
+                                    elif variant == "desktop":
+                                        cid, cname = creator.create_desktop_campaign(campaign, geo)
+                                    else:
+                                        continue
+
+                                    created.append((cid, cname))
+                                    log(f"Created: {cname} (ID: {cid}) — verifying on TJ...")
+
+                                    # ── VERIFY on TJ + AUTO-FIX ──
+                                    try:
+                                        from src.campaign_scraper.reader import scrape_campaign
+                                        from src.campaign_scraper.writer import update_campaign
+
+                                        verify = scrape_campaign(page, str(cid))
+                                        vf = verify.get("fields", {})
+                                        v_geo = vf.get("geo", "")
+                                        v_seg = vf.get("segment_targeting", "")
+                                        v_labels = vf.get("labels", "")
+                                        v_group = vf.get("group", "")
+                                        v_cat = vf.get("content_category", "")
+                                        v_gender = vf.get("gender", "")
+                                        v_os = vf.get("os_include", "")
+                                        v_ads = len(verify.get("ads", []))
+                                        v_fc = vf.get("frequency_cap", "")
+                                        v_budget = vf.get("daily_budget", "")
+
+                                        # Expected values
+                                        exp_geo_set = set(campaign.geo)
+                                        exp_seg = ";".join(campaign.interests) if campaign.interests else ""
+                                        exp_labels = campaign.settings.labels if campaign.settings.labels else []
+                                        exp_cat = campaign.settings.content_category
+                                        exp_gender = campaign.settings.gender
+
+                                        # Check + collect fixes
+                                        checks = []
+                                        fixes_needed = {}
+                                        actual_geo_set = set(v_geo.split(",")) if v_geo else set()
+
+                                        # Geo check
+                                        if actual_geo_set == exp_geo_set:
+                                            checks.append(f"geo={len(actual_geo_set)} PASS")
+                                        else:
+                                            missing = exp_geo_set - actual_geo_set
+                                            extra = actual_geo_set - exp_geo_set
+                                            checks.append(f"geo FAIL (missing={missing}, extra={extra})")
+                                            fixes_needed["geo"] = list(exp_geo_set)
+
+                                        # Segment check
+                                        if not exp_seg:
+                                            checks.append("seg=NONE(ok)")
+                                        elif v_seg:
+                                            checks.append(f"seg=PASS ({v_seg[:25]})")
+                                        else:
+                                            checks.append(f"seg FAIL (empty, want {exp_seg[:25]})")
+                                            fixes_needed["segment_targeting"] = exp_seg
+
+                                        # Category check
+                                        if v_cat == exp_cat:
+                                            checks.append("cat=PASS")
+                                        else:
+                                            checks.append(f"cat FAIL ({v_cat}!={exp_cat})")
+
+                                        # Labels check
+                                        if set(v_labels.split(",")) == set(exp_labels) if exp_labels else not v_labels:
+                                            checks.append(f"labels=PASS")
+                                        else:
+                                            checks.append(f"labels={v_labels}")
+
+                                        checks.append(f"group={v_group} | os={v_os} | gender={v_gender} | ads={v_ads} | fc={v_fc} | budget={v_budget}")
+
+                                        if fixes_needed:
+                                            log(f"⚠ ISSUES {cid}: {' | '.join(checks)}")
+                                            log(f"  Auto-fixing: {list(fixes_needed.keys())}")
+                                            try:
+                                                # Navigate back to audience page and fix
+                                                if "geo" in fixes_needed:
+                                                    page.goto(f"https://advertiser.trafficjunky.com/campaign/{cid}/audience", wait_until="domcontentloaded", timeout=30000)
+                                                    import time as _time
+                                                    _time.sleep(5)
+                                                    # Remove all existing geo
+                                                    page.evaluate('() => { const r = document.querySelector("a.removeTargetedLocation"); if (r) r.click(); }')
+                                                    _time.sleep(0.5)
+                                                    # Re-add correct geos using creator's method
+                                                    creator._configure_geo(fixes_needed["geo"])
+
+                                                if "segment_targeting" in fixes_needed:
+                                                    if "geo" not in fixes_needed:
+                                                        page.goto(f"https://advertiser.trafficjunky.com/campaign/{cid}/audience", wait_until="domcontentloaded", timeout=30000)
+                                                        import time as _time
+                                                        _time.sleep(5)
+                                                    creator._configure_segment_targeting(campaign.interests, "included")
+
+                                                # Save the fixes
+                                                page.evaluate('() => { const btn = document.querySelector("button.confirmAudience.saveAndContinue"); if (btn) btn.click(); }')
+                                                import time as _time
+                                                _time.sleep(5)
+
+                                                log(f"  ✓ Auto-fix applied for {cid}")
+                                            except Exception as fix_err:
+                                                log(f"  ✗ Auto-fix failed for {cid}: {fix_err}")
+                                        else:
+                                            log(f"✓ VERIFIED {cid}: {' | '.join(checks)}")
+
+                                    except Exception as ve2:
+                                        log(f"⚠ Verify failed for {cid}: {ve2}")
+
+                                except Exception as ve:
+                                    log(f"✗ Failed {variant}: {ve}")
+
+                        with job_lock:
+                            if job_id in jobs:
+                                jobs[job_id]["status"] = "completed"
+                                jobs[job_id]["result"] = {"campaigns": [{"id": c[0], "name": c[1]} for c in created]}
+                                jobs[job_id]["completed_at"] = time.time()
+
+                        log(f"Create SHORTS completed: {len(created)} campaigns")
 
                     consecutive_failures = 0
                     is_authenticated = True  # job succeeded, session is definitely valid
@@ -660,6 +886,9 @@ def _scale_pool():
 
         if workers_launched == 0:
             # Always start worker 1
+            desired = 1
+        elif not is_authenticated:
+            # Don't scale past 1 worker until auth succeeds — prevents browser spam
             desired = 1
         elif pending >= 4:
             # Scale to full pool when 4+ jobs pending
@@ -912,6 +1141,44 @@ async def scrape(req: ScrapeRequest):
     )
 
 
+@app.post("/create-shorts", dependencies=[Depends(verify_bearer)])
+async def create_shorts(request: Request):
+    """Create SHORTS campaigns using the scraper's authenticated browser session."""
+    if pool_disabled:
+        raise HTTPException(status_code=503, detail=f"Pool disabled: {pool_disabled_reason}")
+
+    body = await request.json()
+    csv_content = body.get("csv_content", "")
+    if not csv_content:
+        raise HTTPException(status_code=400, detail="csv_content required")
+
+    job_id = str(uuid.uuid4())
+    with job_lock:
+        jobs[job_id] = {
+            "status": "pending",
+            "job_type": "create_shorts",
+            "campaign_id": "batch",
+            "result": None,
+            "ads": None,
+            "error": None,
+            "log_lines": deque(maxlen=500),
+            "created_at": time.time(),
+            "completed_at": None,
+        }
+
+    global _job_seq
+    _scale_pool()
+    _job_seq += 1
+    job_queue.put((1, _job_seq, {
+        "job_id": job_id,
+        "job_type": "create_shorts",
+        "campaign_id": "batch",
+        "csv_content": csv_content,
+    }))
+
+    return {"job_id": job_id, "status": "pending"}
+
+
 @app.post("/scrape-cpm", response_model=JobStatusResponse, dependencies=[Depends(verify_bearer)])
 async def scrape_cpm(req: ScrapeRequest):
     if pool_disabled:
@@ -1139,6 +1406,34 @@ async def inject_session(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/export-session", dependencies=[Depends(verify_bearer)])
+async def export_session():
+    """Return current TJ session file contents so VPS workers can pull a fresh session."""
+    import json as _json
+
+    if not SESSION_FILE.exists():
+        raise HTTPException(status_code=404, detail="No TJ session file found")
+
+    try:
+        data = _json.loads(SESSION_FILE.read_text())
+        cookies = data.get("cookies", [])
+        if not cookies:
+            raise HTTPException(status_code=404, detail="Session file exists but has no cookies")
+        return {
+            "success": True,
+            "session": data,
+            "cookie_count": len(cookies),
+            "authenticated": is_authenticated,
+        }
+    except _json.JSONDecodeError:
+        raise HTTPException(status_code=500, detail="Session file is corrupted")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Export session failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/clear-queue", dependencies=[Depends(verify_bearer)])
 async def clear_queue():
     """Cancel all pending jobs and drain the queue."""
@@ -1271,7 +1566,51 @@ def _relogin_thread():
                     except Exception:
                         pass
 
-            # ── Step 2: Fall back to manual_login (headed, reCAPTCHA ~20-30s) ──
+            # ── Step 2: Try Google OAuth (headed, no reCAPTCHA) ──
+            logger.info("[RELOGIN] Trying Google OAuth login...")
+            browser = pw.chromium.launch(headless=False)
+            context = browser.new_context()
+            page = context.new_page()
+
+            if auth_helper.google_oauth_login(page):
+                auth_helper.save_session(context)
+                is_authenticated = True
+                session_needs_reload = True
+                _clear_pool_disabled()
+
+                with _relogin_lock:
+                    _relogin_status = {"state": "success", "message": "Relogin successful via Google OAuth"}
+                logger.info("[RELOGIN] Google OAuth succeeded, session saved")
+
+                try:
+                    page.close()
+                except Exception:
+                    pass
+                try:
+                    context.close()
+                except Exception:
+                    pass
+                try:
+                    browser.close()
+                except Exception:
+                    pass
+                return
+
+            logger.info("[RELOGIN] Google OAuth failed, falling back to manual_login")
+            try:
+                page.close()
+            except Exception:
+                pass
+            try:
+                context.close()
+            except Exception:
+                pass
+            try:
+                browser.close()
+            except Exception:
+                pass
+
+            # ── Step 3: Fall back to manual_login (headed, reCAPTCHA ~20-30s) ──
             # Close all worker browsers first — they cover the screen and block reCAPTCHA
             logger.info("[RELOGIN] Shutting down worker pool before headed login...")
             _shutdown_worker_pool()
