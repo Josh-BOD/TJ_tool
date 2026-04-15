@@ -411,21 +411,40 @@ class NativeUploader:
         return []
     
     def _click_create_preview(self, page: Page) -> bool:
-        """Click 'Create CSV Preview' button if it exists."""
-        try:
-            # Look for the button
-            preview_btn = page.locator('text=Create CSV Preview').first
-            if preview_btn.is_visible(timeout=2000):
-                logger.info("Clicking 'Create CSV Preview' for Native ads...")
-                preview_btn.click()
+        """Click 'Create CSV Preview' button — retry with increasing timeout."""
+        for attempt in range(3):
+            try:
+                preview_btn = page.locator('text=Create CSV Preview').first
+                timeout = 5000 + (attempt * 3000)  # 5s, 8s, 11s
+                if preview_btn.is_visible(timeout=timeout):
+                    logger.info(f"Clicking 'Create CSV Preview' for Native ads (attempt {attempt+1})...")
+                    preview_btn.scroll_into_view_if_needed()
+                    time.sleep(0.5)
+                    preview_btn.click()
+                    time.sleep(3)
+                    return True
+                else:
+                    # Try JS click as fallback
+                    clicked = page.evaluate("""() => {
+                        const btns = document.querySelectorAll('button, a');
+                        for (const b of btns) {
+                            if (b.textContent.trim().includes('Create CSV Preview')) {
+                                b.scrollIntoView({block: 'center'});
+                                b.click();
+                                return true;
+                            }
+                        }
+                        return false;
+                    }""")
+                    if clicked:
+                        logger.info(f"Clicked 'Create CSV Preview' via JS (attempt {attempt+1})")
+                        time.sleep(3)
+                        return True
+            except Exception as e:
+                logger.debug(f"Create preview attempt {attempt+1}: {e}")
                 time.sleep(2)
-                return True
-            else:
-                logger.debug("No 'Create CSV Preview' button found for Native ads - may not be needed")
-                return True
-        except Exception as e:
-            logger.debug(f"Create preview step for Native ads: {e}")
-            return True  # Not critical if button doesn't exist
+        logger.warning("Could not click 'Create CSV Preview' after 3 attempts")
+        return False
     
     def _dismiss_csv_preview_modal(self, page: Page) -> bool:
         """

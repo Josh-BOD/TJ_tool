@@ -10,20 +10,40 @@ from ..utils import enable_toggle, select2_choose, safe_click
 logger = logging.getLogger(__name__)
 
 COUNTRY_MAP = {
+    # Gold
     "US": "United States", "CA": "Canada", "GB": "United Kingdom",
-    "UK": "United Kingdom", "DE": "Germany", "FR": "France",
-    "ES": "Spain", "IT": "Italy", "NL": "Netherlands",
-    "AU": "Australia", "BR": "Brazil", "JP": "Japan", "MX": "Mexico",
-    "IN": "India", "SE": "Sweden", "NO": "Norway",
-    "DK": "Denmark", "FI": "Finland", "PL": "Poland", "CZ": "Czechia",
-    "AT": "Austria", "CH": "Switzerland", "BE": "Belgium", "IE": "Ireland",
-    "NZ": "New Zealand", "AR": "Argentina", "CO": "Colombia", "CL": "Chile",
-    "PT": "Portugal", "RO": "Romania", "HU": "Hungary", "GR": "Greece",
-    "ZA": "South Africa", "SG": "Singapore", "MY": "Malaysia", "PH": "Philippines",
-    "TH": "Thailand", "ID": "Indonesia", "VN": "Vietnam", "KR": "South Korea",
-    "TW": "Taiwan", "HK": "Hong Kong", "TR": "Turkey", "RU": "Russia",
-    "UA": "Ukraine", "IL": "Israel", "AE": "United Arab Emirates", "SA": "Saudi Arabia",
+    "UK": "United Kingdom", "AU": "Australia", "NZ": "New Zealand",
+    # Silver
+    "AE": "United Arab Emirates", "AT": "Austria", "BE": "Belgium",
+    "BG": "Bulgaria", "CH": "Switzerland", "CR": "Costa Rica",
+    "DE": "Germany", "DK": "Denmark", "EE": "Estonia", "ES": "Spain",
+    "HK": "Hong Kong", "HR": "Croatia", "HU": "Hungary", "IE": "Ireland",
+    "IT": "Italy", "KR": "South Korea", "LT": "Lithuania", "LV": "Latvia",
+    "NL": "Netherlands", "PL": "Poland", "PR": "Puerto Rico", "PT": "Portugal",
+    "RO": "Romania", "RS": "Serbia", "SA": "Saudi Arabia", "SK": "Slovakia",
+    "TW": "Taiwan",
+    # Bronze1
+    "AD": "Andorra", "BM": "Bermuda", "CD": "Congo", "CW": "Curaçao",
+    "CY": "Cyprus", "CZ": "Czechia", "FI": "Finland", "FO": "Faroe Islands",
+    "GD": "Grenada", "GG": "Guernsey", "GL": "Greenland", "ID": "Indonesia",
+    "IM": "Isle of Man", "JE": "Jersey", "KY": "Cayman Islands",
+    "LA": "Laos", "LB": "Lebanon", "LC": "Saint Lucia", "LU": "Luxembourg",
+    "MC": "Monaco", "MD": "Moldova", "MT": "Malta", "PA": "Panama",
+    "SI": "Slovenia", "TH": "Thailand", "TR": "Turkey", "UA": "Ukraine",
+    "UY": "Uruguay", "VE": "Venezuela", "YE": "Yemen",
+    # Bronze3
+    "AL": "Albania", "BA": "Bosnia and Herzegovina", "BR": "Brazil",
+    "CL": "Chile", "GE": "Georgia", "GR": "Greece", "IL": "Israel",
+    "SG": "Singapore", "ZA": "South Africa",
+    # Other common
+    "FR": "France", "JP": "Japan", "MX": "Mexico", "IN": "India",
+    "SE": "Sweden", "NO": "Norway", "AR": "Argentina", "CO": "Colombia",
+    "MY": "Malaysia", "PH": "Philippines", "VN": "Vietnam", "RU": "Russia",
     "EG": "Egypt", "NG": "Nigeria", "KE": "Kenya", "PE": "Peru",
+    "BB": "Barbados", "JM": "Jamaica", "TT": "Trinidad and Tobago",
+    "DO": "Dominican Republic", "EC": "Ecuador", "PY": "Paraguay",
+    "BO": "Bolivia", "GT": "Guatemala", "HN": "Honduras", "SV": "El Salvador",
+    "NI": "Nicaragua", "CU": "Cuba", "HT": "Haiti",
 }
 
 LANGUAGE_MAP = {
@@ -47,8 +67,11 @@ def configure_step2(page: Page, config: V4CampaignConfig, variant: str):
         pass
     time.sleep(2)
 
-    # Geo
-    _add_geos(page, config.geo)
+    # Geo — only modify if CSV specified geos (non-default)
+    if config.geo and config.geo != ["US"]:
+        _add_geos(page, config.geo)
+    else:
+        logger.info("    Geo: inherited from template (no CSV override)")
 
     # OS targeting — skip for desktop/all variants, auto-derive for mobile variants
     v = variant.lower().strip()
@@ -159,7 +182,11 @@ def _add_geos(page: Page, geo_list: list):
 # ─── OS Targeting ─────────────────────────────────────────────────
 
 def _enable_os_section(page: Page):
-    """Enable the OS targeting section — scroll, toggle, and force-show content."""
+    """Enable the OS targeting section — scroll, toggle, and force-show content.
+
+    On live campaign edit pages, the toggle may already be ON (inherited from template).
+    Check the checkbox state before clicking to avoid accidentally disabling it.
+    """
     page.evaluate('''() => {
         const section = document.querySelector("#campaign_operatingSystemsTargeting");
         if (!section) return;
@@ -167,9 +194,26 @@ def _enable_os_section(page: Page):
     }''')
     time.sleep(0.5)
 
-    # Click the onoffswitch label (same pattern as smart bidder toggle)
-    page.click('.onoffswitch-label[data-input="#operating_systems"]')
-    time.sleep(1.5)
+    # Check if already enabled
+    is_on = page.evaluate('''() => {
+        const cb = document.querySelector("#operating_systems");
+        if (cb) return cb.checked;
+        // Fallback: check inside the section
+        const section = document.querySelector("#campaign_operatingSystemsTargeting");
+        if (section) {
+            const cb2 = section.querySelector("input[type='checkbox']");
+            return cb2 ? cb2.checked : false;
+        }
+        return false;
+    }''')
+
+    if not is_on:
+        # Click the onoffswitch label to enable
+        page.click('.onoffswitch-label[data-input="#operating_systems"]')
+        time.sleep(1.5)
+    else:
+        logger.info("    OS targeting: already enabled")
+        time.sleep(0.5)
 
     # Verify the select2 is now visible
     try:
@@ -179,7 +223,19 @@ def _enable_os_section(page: Page):
         )
         logger.info("    OS targeting: section enabled")
     except Exception:
-        logger.warning("    OS targeting: select2 still hidden after toggle attempts")
+        # Force-show via JS as last resort
+        page.evaluate('''() => {
+            const section = document.querySelector("#campaign_operatingSystemsTargeting");
+            if (section) {
+                section.querySelectorAll('[style*="display: none"]').forEach(el => {
+                    el.style.display = '';
+                });
+                const content = section.querySelector('.section-content, .toggle-content');
+                if (content) content.style.display = '';
+            }
+        }''')
+        time.sleep(1)
+        logger.warning("    OS targeting: force-showed via JS")
 
 def _auto_os_for_variant(page: Page, os_names: list, config: V4CampaignConfig):
     """Auto-derive OS targeting from variant (no explicit CSV column set)."""
@@ -335,19 +391,76 @@ def _set_version_constraint(page: Page, op: str, version: str):
 # ─── Browser Targeting ────────────────────────────────────────────
 
 def _configure_browser_targeting(page: Page, config: V4CampaignConfig):
-    """Enable browser targeting toggle and check individual browser checkboxes."""
-    enable_toggle(page, "campaign_browserTargeting")
-    time.sleep(0.5)
+    """Enable browser targeting toggle and check individual browser checkboxes.
 
-    for browser_name in config.browsers_include:
+    The toggle checkbox is #browser_targeting (not inside a campaign_ section).
+    On live edits it may already be on — check before toggling.
+    """
+    # Check if already enabled
+    is_on = page.evaluate('''() => {
+        const cb = document.getElementById("browser_targeting");
+        return cb ? cb.checked : false;
+    }''')
+
+    if not is_on:
+        # Try onoffswitch label first, then fallback to enable_toggle
         try:
-            # Try clicking the checkbox label for this browser
-            label = page.locator(f'label:has-text("{browser_name}")').first
-            if label.count() > 0:
-                label.click()
-                time.sleep(0.2)
-        except Exception as e:
-            logger.warning(f"    Could not select browser {browser_name}: {e}")
+            page.click('.onoffswitch-label[data-input="#browser_targeting"]', timeout=3000)
+        except Exception:
+            enable_toggle(page, "campaign_browserTargeting")
+        time.sleep(1)
+    else:
+        logger.info("    Browser targeting: already enabled")
+
+    # Uncheck all browsers first to start clean
+    page.evaluate('''() => {
+        document.querySelectorAll("input[name='browsers_list[]']:checked").forEach(cb => {
+            cb.checked = false;
+            cb.dispatchEvent(new Event("change", {bubbles: true}));
+        });
+    }''')
+    time.sleep(0.3)
+
+    # Check the specified browsers (use case-insensitive substring match)
+    for browser_name in config.browsers_include:
+        checked = page.evaluate('''(name) => {
+            const nameLower = name.toLowerCase();
+            // First try: browsers_list[] checkboxes with matching labels
+            const checkboxes = document.querySelectorAll("input[name='browsers_list[]']");
+            for (const cb of checkboxes) {
+                const label = document.querySelector("label[for='" + cb.id + "']");
+                const labelText = label ? label.textContent.trim().toLowerCase() : "";
+                if (labelText === nameLower || labelText.includes(nameLower)) {
+                    if (!cb.checked) {
+                        cb.checked = true;
+                        cb.click();
+                        cb.dispatchEvent(new Event("change", {bubbles: true}));
+                        return "checked: " + (label ? label.textContent.trim() : cb.id);
+                    }
+                    return "already: " + (label ? label.textContent.trim() : cb.id);
+                }
+            }
+            // Second try: any label containing the browser name
+            const labels = document.querySelectorAll("label");
+            for (const label of labels) {
+                if (label.textContent.trim().toLowerCase().includes(nameLower)) {
+                    const forId = label.getAttribute("for");
+                    const cb = forId ? document.getElementById(forId) : null;
+                    if (cb && cb.type === "checkbox" && !cb.checked) {
+                        cb.checked = true;
+                        cb.click();
+                        cb.dispatchEvent(new Event("change", {bubbles: true}));
+                        return "checked: " + label.textContent.trim();
+                    }
+                    if (cb && cb.checked) return "already: " + label.textContent.trim();
+                }
+            }
+            return "not_found";
+        }''', browser_name)
+        if "not_found" in checked:
+            logger.warning(f"    Browser {browser_name}: not found")
+        else:
+            logger.info(f"    Browser {browser_name}: {checked}")
 
     logger.info(f"    Browsers: {', '.join(config.browsers_include)}")
 
@@ -515,30 +628,56 @@ def _configure_income(page: Page, config: V4CampaignConfig):
 # ─── Retargeting ─────────────────────────────────────────────────
 
 def _configure_retargeting(page: Page, config: V4CampaignConfig):
-    """Enable retargeting toggle and configure type/mode/value."""
+    """Enable retargeting toggle and configure type/mode/value.
 
-    # Always enable the toggle — it activates the select2 dropdown
-    enable_toggle(page, "campaign_retargeting")
+    Two retargeting modes on TJ:
+    - click/impression: Uses #retargeting_value select2 (campaign audience)
+    - cookie: Uses #cookie select2 + Add button for each cookie, stores in #retargeting_list
+    """
+    # Scroll to and enable the retargeting toggle
+    page.evaluate('''() => {
+        const section = document.querySelector("#campaign_retargeting");
+        if (section) section.scrollIntoView({block: "center"});
+    }''')
     time.sleep(0.5)
+    enable_toggle(page, "campaign_retargeting")
+    time.sleep(1)
 
-    # Type: click or impression (always set)
-    if config.retargeting_type:
-        try:
-            page.click(f'#retargeting_type_{config.retargeting_type}', timeout=3000)
-        except Exception:
-            safe_click(page, f'label:has-text("{config.retargeting_type.title()}")')
-        time.sleep(0.3)
+    # Type: click, impression, or cookie
+    rt_type = (config.retargeting_type or "click").lower()
+    try:
+        page.evaluate(f'''() => {{
+            const radio = document.getElementById("retargeting_type_{rt_type}");
+            if (radio) {{
+                radio.checked = true;
+                radio.click();
+                radio.dispatchEvent(new Event("change", {{bubbles: true}}));
+                // Also click the parent label for Bootstrap btn-group
+                const label = radio.closest("label");
+                if (label) label.click();
+            }}
+        }}''')
+        time.sleep(1)
+    except Exception:
+        safe_click(page, f'label:has(#retargeting_type_{rt_type})')
+        time.sleep(1)
 
-    # Mode: include or exclude — skip for Remarketing (mode is pre-set to "include")
-    if not config.is_remarketing and config.retargeting_mode:
+    if rt_type == "cookie":
+        _configure_cookie_retargeting(page, config)
+    else:
+        _configure_audience_retargeting(page, config)
+
+
+def _configure_audience_retargeting(page: Page, config: V4CampaignConfig):
+    """Configure click/impression audience retargeting via #retargeting_value select2."""
+    # Mode: include or exclude
+    if config.retargeting_mode:
         try:
             page.click(f'#retargeting_mode_{config.retargeting_mode}', timeout=3000)
         except Exception:
             safe_click(page, f'label:has-text("{config.retargeting_mode.title()}")')
         time.sleep(0.3)
 
-    # Value: audience/pixel name (or campaign name for Remarketing)
-    # Use longer timeout — dropdown can take >60s to populate
     if config.retargeting_value:
         try:
             select2_choose(
@@ -556,12 +695,110 @@ def _configure_retargeting(page: Page, config: V4CampaignConfig):
     )
 
 
+def _configure_cookie_retargeting(page: Page, config: V4CampaignConfig):
+    """Configure cookie/pixel retargeting.
+
+    DOM (2026-04-14):
+    - select#cookie with select2 container #select2-cookie-container
+    - After selecting a cookie, fields auto-fill and Add button enables
+    - button.addNewCookie — click to add each cookie to #retargeting_list
+    - Repeat for each cookie in the comma-separated retargeting_value
+    """
+    # Parse cookie names from retargeting_value (comma or semicolon separated)
+    raw = config.retargeting_value or ""
+    sep = ";" if ";" in raw else ","
+    cookie_names = [c.strip() for c in raw.split(sep) if c.strip()]
+
+    if not cookie_names:
+        logger.warning("    No cookie names specified in retargeting_value")
+        return
+
+    added = 0
+    for cookie_name in cookie_names:
+        try:
+            # Click the cookie select2 container to open dropdown
+            page.click('#select2-cookie-container', timeout=5000)
+            time.sleep(1)
+
+            # Type the cookie name in the search field
+            search = page.locator('.select2-container--open .select2-search__field')
+            search.fill(cookie_name)
+            time.sleep(2)  # Wait for results to load (can be slow)
+
+            # Click the matching option
+            option = page.locator('li.select2-results__option').filter(
+                has_text=cookie_name
+            ).first
+            try:
+                option.wait_for(state="visible", timeout=10000)
+                option.click()
+            except Exception:
+                # Try clicking first available option
+                page.locator('li.select2-results__option').first.click(timeout=5000)
+            time.sleep(1)
+
+            # Click Add button (enabled after cookie selection)
+            add_btn = page.locator('button.addNewCookie')
+            try:
+                add_btn.wait_for(state="visible", timeout=5000)
+                # Remove disabled if still set
+                page.evaluate('''() => {
+                    const btn = document.querySelector("button.addNewCookie");
+                    if (btn) btn.removeAttribute("disabled");
+                }''')
+                time.sleep(0.3)
+                add_btn.click(force=True)
+                time.sleep(1)
+                added += 1
+                logger.info(f"    Cookie added: {cookie_name}")
+            except Exception as e:
+                logger.warning(f"    Could not click Add for cookie '{cookie_name}': {e}")
+
+        except Exception as e:
+            logger.warning(f"    Could not select cookie '{cookie_name}': {e}")
+            # Close any open dropdown
+            try:
+                page.keyboard.press("Escape")
+                time.sleep(0.3)
+            except Exception:
+                pass
+
+    # Verify cookies were added by checking retargeting_list
+    cookie_list = page.evaluate('''() => {
+        const input = document.getElementById("retargeting_list");
+        return input ? input.value : "not_found";
+    }''')
+    logger.info(
+        f"    Cookie retargeting: {added}/{len(cookie_names)} added "
+        f"(retargeting_list={cookie_list})"
+    )
+
+
 # ─── VR Targeting ────────────────────────────────────────────────
 
 def _configure_vr(page: Page, config: V4CampaignConfig):
-    """Enable VR targeting toggle and select VR/non-VR."""
-    enable_toggle(page, "campaign_virtualReality")
-    time.sleep(0.5)
+    """Enable VR targeting toggle and select VR/non-VR.
+
+    Uses onoffswitch-label click pattern — enable_toggle() targets the wrong
+    element on live campaign edit pages.
+    """
+    is_on = page.evaluate('''() => {
+        const cb = document.getElementById("virtual_reality");
+        if (cb) return cb.checked;
+        const section = document.getElementById("campaign_virtualReality");
+        if (section) {
+            const cb2 = section.querySelector("input[type='checkbox']");
+            return cb2 ? cb2.checked : false;
+        }
+        return false;
+    }''')
+
+    if not is_on:
+        try:
+            page.click('.onoffswitch-label[data-input="#virtual_reality"]', timeout=3000)
+        except Exception:
+            enable_toggle(page, "campaign_virtualReality")
+        time.sleep(1)
 
     if config.vr_mode.lower() == "vr":
         safe_click(page, '#virtual_realityVR')
@@ -616,6 +853,16 @@ def _configure_segments(page: Page, config: V4CampaignConfig):
     segments = [s.strip() for s in config.segment_targeting.split(";") if s.strip()]
 
     try:
+        # Remove existing segments first (prevents duplicates on cloned campaigns)
+        page.evaluate('''() => {
+            const removeLinks = document.querySelectorAll(
+                'a.removeSegment, a[data-action="removeSegment"], ' +
+                '#campaign_segmentTargeting a[class*="remove"]'
+            );
+            removeLinks.forEach(a => a.click());
+        }''')
+        time.sleep(0.5)
+
         # Scroll to segment section and click via JS (section may be collapsed)
         clicked = page.evaluate('''() => {
             const section = document.querySelector("#campaign_segmentTargeting");

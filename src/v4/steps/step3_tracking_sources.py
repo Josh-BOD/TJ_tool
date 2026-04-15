@@ -69,20 +69,29 @@ def _configure_smart_bidder(page: Page, config: V4CampaignConfig):
     The automatic_bidding checkbox is display:none — click the onoffswitch-label.
     A custom alert dialog ("AUTOMATE BIDDING?") pops up and must be confirmed.
     Radio inputs (smart_cpm/smart_cpa) have pointer-events:none — click the <label>.
+    On live campaign edits the toggle may already be ON — check first.
     """
     try:
-        # Toggle automatic bidding ON via the visible label
-        page.click('.onoffswitch-label[data-input="#automatic_bidding"]')
-        time.sleep(1)
+        # Check if already enabled before toggling
+        is_on = page.evaluate('''() => {
+            const cb = document.getElementById("automatic_bidding");
+            return cb ? cb.checked : false;
+        }''')
 
-        # Confirm the "AUTOMATE BIDDING?" custom alert dialog
-        try:
-            ok_btn = page.locator('.customAlertBox .smallButton.greenButton')
-            ok_btn.click(timeout=5000)
-            time.sleep(0.5)
-            logger.info("    Automatic bidding: ON (confirmed)")
-        except Exception:
-            logger.info("    Automatic bidding: ON (no confirm dialog)")
+        if not is_on:
+            page.click('.onoffswitch-label[data-input="#automatic_bidding"]')
+            time.sleep(1)
+
+            # Confirm the "AUTOMATE BIDDING?" custom alert dialog
+            try:
+                ok_btn = page.locator('.customAlertBox .smallButton.greenButton')
+                ok_btn.click(timeout=5000)
+                time.sleep(0.5)
+                logger.info("    Automatic bidding: ON (confirmed)")
+            except Exception:
+                logger.info("    Automatic bidding: ON (no confirm dialog)")
+        else:
+            logger.info("    Automatic bidding: already ON")
 
         # Select bidding mode — click the parent <label>, not the radio
         bidder = config.smart_bidder.lower()
@@ -191,7 +200,8 @@ def _apply_suggested_cpm_bids(page: Page, config: V4CampaignConfig):
 
     if adjust is not None:
         _bulk_adjust_by_percentage(page, int(adjust))
-        logger.info(f"    CPM adjusted by +{int(adjust)}% from suggested")
+        sign = "+" if adjust >= 0 else ""
+        logger.info(f"    CPM adjusted by {sign}{int(adjust)}% from suggested")
     else:
         logger.info("    Using matched suggested CPM (no adjustment)")
 

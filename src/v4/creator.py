@@ -5,7 +5,7 @@ from typing import Tuple
 from playwright.sync_api import Page
 
 from .models import V4CampaignConfig
-from .utils import click_save_and_continue, check_session, dismiss_modals
+from .utils import click_save_and_continue, check_session, dismiss_modals, set_radio
 from .steps import step1_basic_settings as step1
 from .steps import step2_geo_audience as step2
 from .steps import step3_tracking_sources as step3
@@ -118,6 +118,29 @@ class V4CampaignCreator:
             logger.info(f"  [Nav] Starting step 5, URL: {self.page.url}")
             step5.configure_step5(self.page, config, csv_dir, campaign_name)
 
+            # After finalization, get the LIVE campaign ID.
+            # Wait for TJ to register, then use the campaigns filter to find it.
+            import time as _t2; _t2.sleep(5)
+            try:
+                # Re-establish page context (may have been destroyed during finish)
+                try:
+                    self.page.goto(f"{BASE_URL}/campaigns?campaignTab=bid",
+                                   wait_until="domcontentloaded", timeout=20000)
+                    _t2.sleep(3)
+                except Exception:
+                    _t2.sleep(3)
+
+                live_id = self._extract_live_id(campaign_id, campaign_name)
+                if live_id and live_id != campaign_id:
+                    logger.info(f"  Draft {campaign_id} → Live {live_id}")
+                    campaign_id = live_id
+            except Exception as e:
+                logger.debug(f"  Could not extract live ID: {e}")
+
+            # Pause the campaign if launch_paused is set
+            if getattr(config, 'launch_paused', True):
+                self._pause_campaign(campaign_id)
+
             logger.info(f"  Campaign created: {campaign_name} (ID: {campaign_id})")
             return campaign_id, campaign_name
 
@@ -135,10 +158,10 @@ class V4CampaignCreator:
         csv_dir: str,
     ) -> Tuple[str, str]:
         """
-        Clone a campaign from template_campaign_id, then update name/keywords/labels.
+        Clone a campaign from template_campaign_id, then override ALL configured fields.
 
-        Inherits bids, sources, budget, schedule from the template.
-        Only updates: name, group, keywords, labels, and uploads ads.
+        Inherits everything from template by default. For each step, navigates to
+        the live campaign edit page and overrides fields that the config specifies.
 
         Args:
             config: Campaign config with template_campaign_id set.
@@ -149,6 +172,7 @@ class V4CampaignCreator:
             (campaign_id, campaign_name)
         """
         import time as _t
+        from .steps.step1_basic_settings import GENDER_MAP
 
         template_id = config.template_campaign_id
         campaign_name = self.name_prefix + self._build_name(config, variant)
@@ -157,15 +181,16 @@ class V4CampaignCreator:
 
         # ── Clone the template ───────────────────────────────
         new_id = self._clone_campaign(template_id)
-        logger.info(f"  Cloned to draft: {new_id}")
+        logger.info(f"  Cloned to campaign: {new_id}")
 
-        # Cloned campaigns are LIVE (not drafts) — use live edit URLs
-        # URL patterns: /campaign/{id}#section_basicSettings
-        #               /campaign/{id}/audience#section_audienceTargeting
-        #               /campaign/{id}/tracking-spots-rules
-        #               /campaign/{id}/ad-settings
+        # Cloned campaigns are LIVE — use live edit URLs
+        # /campaign/{id}                    — basic settings
+        # /campaign/{id}/audience           — geo & audience
+        # /campaign/{id}/tracking-spots-rules — tracking & sources
+        # /campaign/{id}/schedule-budget    — schedule & budget
+        # /campaign/{id}/ad-settings        — ads
 
-        # ── Step 1: Update name ──────────────────────────────
+        # ── Step 1: Name, Group, Gender, Labels ─────────────
         if not check_session(self.page):
             raise V4CreationError("Session expired after clone", orphan_id=new_id)
 
@@ -177,7 +202,7 @@ class V4CampaignCreator:
         _t.sleep(5)
         dismiss_modals(self.page)
 
-        # Update campaign name
+        # Campaign name
         try:
             name_input = self.page.query_selector('input[name="name"]')
             if name_input:
@@ -187,42 +212,274 @@ class V4CampaignCreator:
         except Exception as e:
             logger.warning(f"    Could not set name: {e}")
 
-        # Auto-generate labels from keyword_name if not explicitly set with niche
+        # Group (skip if General — that's the default)
+        if config.group and config.group.lower() != "general":
+            step1._select_or_create_group(self.page, config.group)
+
+        # Gender
+        if config.gender:
+            gen_val = GENDER_MAP.get(config.gender, "1")
+            set_radio(self.page, "demographic_targeting_id", gen_val)
+            logger.info(f"    Gender: {config.gender}")
+
+        # Content category (editable on live campaigns via radio)
+        if config.content_category:
+            set_radio(self.page, "content_category_id", config.content_category.lower())
+            logger.info(f"    Content category: {config.content_category}")
+
+        # Labels (auto-generate from keyword_name + explicit labels)
         labels = list(config.labels) if config.labels else []
         if config.keyword_name:
-            # Extract niche from keyword_name (e.g. "Big Tits" → "BigTits")
             niche = config.keyword_name.replace("KEY-", "").replace("INT-", "").replace(" ", "")
             if niche and niche not in labels:
                 labels.append(niche)
-
-        # Update labels (clears old ones first)
         if labels:
             step1._set_labels(self.page, labels)
 
-        # Save via any visible save/update button
         self._save_draft_step(self.page)
         logger.info(f"  [Nav] Step 1 saved")
 
-        # ── Step 2: Update keywords ──────────────────────────
+        # ── Step 2: Geo, Audience & Targeting ────────────────
+        needs_step2 = (
+            config.keywords
+            or config.has_os_targeting
+            or config.has_browser_targeting
+            or config.has_browser_language
+            or config.has_postal_codes
+            or config.has_isp_targeting
+            or config.has_ip_targeting
+            or config.has_income_targeting
+            or config.has_retargeting
+            or config.has_vr_targeting
+            or config.has_segment_targeting
+        )
+
+        # Always visit step 2 — geo is always set from CSV, and most
+        # campaigns need at least keywords or geo overrides
+        if not check_session(self.page):
+            raise V4CreationError("Session expired before Step 2", orphan_id=new_id)
+
+        self.page.goto(
+            f"{BASE_URL}/campaign/{new_id}/audience#section_audienceTargeting",
+            wait_until="domcontentloaded",
+            timeout=30000,
+        )
+        _t.sleep(5)
+        dismiss_modals(self.page)
+
+        # Geo & all toggle-gated targeting (OS, browser, language, etc.)
+        # configure_step2 only modifies fields where config has non-default values
+        step2.configure_step2(self.page, config, variant)
+
+        # Keywords (separate from step2 — handled after geo/targeting)
+        _handle_keywords(self.page, config)
+
+        # Wait for keyword bulk-add to fully commit before saving
         if config.keywords:
+            import time as _tw
+            _tw.sleep(2)
+
+        # Save audience page — may trigger "Match Suggested CPM" modal
+        self._save_audience_page()
+        logger.info(f"  [Nav] Step 2 saved")
+
+        # ── Step 3: Tracking, Sources & Bids ─────────────────
+        needs_step3 = bool(
+            config.tracker_id
+            or config.smart_bidder
+            or (config.source_selection and config.source_selection.upper() != "ALL")
+        )
+
+        if needs_step3:
+            if not check_session(self.page):
+                raise V4CreationError("Session expired before Step 3", orphan_id=new_id)
+
             self.page.goto(
-                f"{BASE_URL}/campaign/{new_id}/audience#section_audienceTargeting",
+                f"{BASE_URL}/campaign/{new_id}/tracking-spots-rules",
                 wait_until="domcontentloaded",
                 timeout=30000,
             )
             _t.sleep(5)
             dismiss_modals(self.page)
-            _handle_keywords(self.page, config)
+
+            step3.configure_step3(self.page, config)
+
             self._save_draft_step(self.page)
-            logger.info(f"  [Nav] Step 2 saved (keywords updated)")
+            logger.info(f"  [Nav] Step 3 saved")
+        else:
+            logger.info(f"  [Nav] Step 3 skipped (inherited from template)")
 
-        # ── Steps 3 & 4: Skip (inherited from template) ─────
-        logger.info(f"  [Nav] Steps 3-4 skipped (inherited from template)")
+        # ── Step 4: Schedule & Budget ────────────────────────
+        # Only visit Step 4 if CSV specifies schedule/budget fields.
+        # Otherwise inherit from template.
+        needs_step4 = bool(
+            config.frequency_cap
+            or config.budget_type
+            or config.daily_budget
+            or config.start_date
+            or config.end_date
+        )
+        if needs_step4:
+            if not check_session(self.page):
+                raise V4CreationError("Session expired before Step 4", orphan_id=new_id)
 
-        # Step 5 skipped — clone inherits ads from template
+            self.page.goto(
+                f"{BASE_URL}/campaign/{new_id}/schedule-budget",
+                wait_until="domcontentloaded",
+                timeout=30000,
+            )
+            _t.sleep(5)
+            dismiss_modals(self.page)
+
+            step4.configure_step4(self.page, config)
+
+            self._save_draft_step(self.page)
+            logger.info(f"  [Nav] Step 4 saved")
+        else:
+            logger.info(f"  [Nav] Step 4 skipped (inherited from template)")
+
+        # ── Step 5: Ad Settings (only if csv_file specified) ─
+        if config.csv_file:
+            if not check_session(self.page):
+                raise V4CreationError("Session expired before Step 5", orphan_id=new_id)
+
+            self.page.goto(
+                f"{BASE_URL}/campaign/{new_id}/ad-settings",
+                wait_until="domcontentloaded",
+                timeout=30000,
+            )
+            _t.sleep(5)
+            dismiss_modals(self.page)
+
+            step5.configure_step5(self.page, config, csv_dir, campaign_name)
+        else:
+            logger.info(f"  [Nav] Step 5 skipped (keeping template ads)")
+
+        # Pause the campaign if launch_paused is set
+        if getattr(config, 'launch_paused', True):
+            self._pause_campaign(new_id)
 
         logger.info(f"  Campaign cloned: {campaign_name} (ID: {new_id})")
         return new_id, campaign_name
+
+    def _pause_campaign(self, campaign_id: str):
+        """Pause a campaign by navigating to its page and clicking the pause control."""
+        import time as _t
+        try:
+            self.page.goto(
+                f"{BASE_URL}/campaign/{campaign_id}",
+                wait_until="domcontentloaded", timeout=15000,
+            )
+            _t.sleep(3)
+
+            # Click the pause icon (fa-pause) on the campaign page
+            paused = self.page.evaluate('''() => {
+                // Look for the pause icon button
+                const pauseIcon = document.querySelector('i.fa-pause, i.fal.fa-pause, i[class*="fa-pause"]');
+                if (pauseIcon) {
+                    pauseIcon.click();
+                    return "paused_via_icon";
+                }
+                // Try parent actionBtn
+                const actionBtns = document.querySelectorAll('.actionBtn');
+                for (const btn of actionBtns) {
+                    if (btn.className.includes('pause')) {
+                        btn.click();
+                        return "paused_via_actionBtn";
+                    }
+                }
+                // Check if already paused (play icon visible instead)
+                const playIcon = document.querySelector('i.fa-play, i[class*="fa-play"]');
+                if (playIcon) return "already_paused";
+                return "no_pause_control";
+            }''')
+            _t.sleep(1)
+
+            # Confirm any dialog
+            self.page.evaluate('''() => {
+                document.querySelectorAll('.customAlertBox a, .modal.show a.greenButton').forEach(b => {
+                    if (b.textContent.trim().match(/yes|ok|confirm/i)) b.click();
+                });
+            }''')
+            _t.sleep(1)
+            logger.info(f"    Campaign paused: {paused}")
+        except Exception as e:
+            logger.warning(f"    Could not pause campaign: {e}")
+
+    def _save_audience_page(self):
+        """Save the audience page on a live campaign edit.
+
+        On live campaigns, the save button may trigger a navigation (Save & Continue)
+        or stay on the same page (Update). Handle both cases gracefully.
+        After saving, TJ may show a "Match Suggested CPM" modal — dismiss it.
+        """
+        import time as _t
+
+        # Use "Save & Continue" (confirmAudience) which persists keywords and
+        # toggle sections. "Save Changes" (#saveChanges) doesn't persist
+        # keyword bulk-add or some toggle changes.
+        saved = self.page.evaluate('''() => {
+            const selectors = [
+                "button.confirmAudience.saveAndContinue",
+                "button.saveAndContinue",
+                "button#saveChanges",
+                "button#addCampaign",
+            ];
+            for (const sel of selectors) {
+                const btn = document.querySelector(sel);
+                if (btn && btn.offsetParent !== null) {
+                    btn.scrollIntoView({block: "center"});
+                    btn.click();
+                    return sel;
+                }
+            }
+            return null;
+        }''')
+
+        if saved:
+            logger.info(f"    Audience save via: {saved}")
+        else:
+            logger.warning("    No audience save button found")
+            return
+
+        import time as _t
+        _t.sleep(5)
+
+        # Handle "Match Suggested CPM" modal if it appears
+        for _ in range(10):
+            try:
+                modal_result = self.page.evaluate('''() => {
+                    const modals = document.querySelectorAll(
+                        '.modal.show, .modal.in, .modal[style*="display: block"], .customAlertBox'
+                    );
+                    for (const m of modals) {
+                        if (m.offsetHeight > 0) {
+                            const text = m.textContent || "";
+                            if (text.includes("Match Suggested CPM") || text.includes("suggested CPM")) {
+                                const btn = m.querySelector(
+                                    'a.smallButton.greenButton, button.greenButton, a.greenButton'
+                                );
+                                if (btn) { btn.click(); return "dismissed_cpm_modal"; }
+                            }
+                            const close = m.querySelector('.close, [data-dismiss="modal"]');
+                            if (close) { close.click(); return "dismissed_other_modal"; }
+                        }
+                    }
+                    return null;
+                }''')
+                if modal_result:
+                    logger.info(f"    {modal_result}")
+                    break
+            except Exception:
+                logger.info("    Audience save completed (page navigated)")
+                return
+            _t.sleep(1)
+
+        _t.sleep(1)
+        try:
+            dismiss_modals(self.page)
+        except Exception:
+            pass
 
     @staticmethod
     def _save_draft_step(page: Page):
@@ -231,6 +488,7 @@ class V4CampaignCreator:
         saved = page.evaluate('''() => {
             // Try all save button variants
             const selectors = [
+                "button#saveChanges",
                 "button#addCampaign",
                 "button.confirmAudience.saveAndContinue",
                 "button.confirmtrackingAdSpotsRules.saveAndContinue",
@@ -305,6 +563,55 @@ class V4CampaignCreator:
 
         return new_id
 
+    def _extract_live_id(self, draft_id: str, campaign_name: str) -> str:
+        """After finalization, find the live campaign ID.
+
+        Strategy: load campaign overview with draft ID — TJ may redirect to live ID,
+        or the overview page may contain the external campaign ID.
+        """
+        import time as _t
+        import re
+
+        # Method 1: Check current URL for live ID
+        try:
+            url = self.page.url
+            match = re.search(r'/campaign/(\d{10,})', url)
+            if match and "/drafts/" not in url:
+                return match.group(1)
+        except Exception:
+            pass
+
+        # Method 2: Navigate to /campaign/{draft_id} — TJ may redirect to live campaign
+        try:
+            self.page.goto(f"{BASE_URL}/campaign/{draft_id}",
+                          wait_until="domcontentloaded", timeout=15000)
+            _t.sleep(3)
+            url = self.page.url
+            # If redirected to a live campaign page (not /campaigns list)
+            match = re.search(r'/campaign/(\d{10,})(?:/|$|\?)', url)
+            if match and "/drafts/" not in url:
+                logger.info(f"    Live ID via campaign redirect: {match.group(1)}")
+                return match.group(1)
+        except Exception:
+            pass
+
+        # Method 3: Navigate to campaign overview
+        try:
+            self.page.goto(f"{BASE_URL}/campaign/overview/{draft_id}",
+                          wait_until="domcontentloaded", timeout=15000)
+            _t.sleep(3)
+            url = self.page.url
+            match = re.search(r'/campaign/(?:overview/)?(\d{10,})', url)
+            if match:
+                logger.info(f"    Live ID via overview redirect: {match.group(1)}")
+                return match.group(1)
+        except Exception:
+            pass
+
+        logger.info(f"    Could not find live ID for draft {draft_id}")
+
+        return draft_id
+
     # ── Helpers ───────────────────────────────────────────────────
 
     def _build_name(self, config: V4CampaignConfig, variant: str) -> str:
@@ -313,6 +620,9 @@ class V4CampaignCreator:
         ad_format_name_map = {"display": "NATIVE", "instream": "INSTREAM", "pop": "POP"}
         ad_format = ad_format_name_map.get(config.ad_format_type, "NATIVE")
         ad_format_name = "PREROLL" if ad_format == "INSTREAM" else ad_format
+        # Distinguish Native from Banner (both are ad_format_type=display)
+        if config.ad_format_type == "display" and config.format_type == "banner":
+            ad_format_name = "BANNER"
 
         mobile_combined = variant.lower() in ("all_mobile", "mobile")
 

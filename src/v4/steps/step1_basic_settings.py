@@ -20,6 +20,7 @@ AD_TYPE_MAP = {"static_banner": "1", "video_banner": "2", "video_file": "5", "ro
 DIMENSION_MAP = {
     "300x250": "9", "950x250": "5", "468x60": "25", "305x99": "55",
     "300x100": "80", "970x90": "221", "320x480": "9771", "640x360": "9731",
+    "16:9": "9651", "pre-roll (16:9)": "9651",  # Pre-roll In-Stream 16:9
     "9:16": "9781",  # Shorties In-Stream 9:16
 }
 GENDER_MAP = {"all": "1", "male": "2", "female": "3"}
@@ -116,6 +117,9 @@ def configure_step1(page: Page, config: V4CampaignConfig, campaign_name: str, va
     set_radio(page, "demographic_targeting_id", gen_val)
     logger.info(f"    Gender: {config.gender}")
 
+    # 13. Multi-Ad Placements — always disable (we manage ads via CSV upload)
+    _disable_multi_ad_placements(page)
+
     # Save & Continue
     logger.info("    Saving basic settings...")
     click_save_and_continue(page)
@@ -175,6 +179,51 @@ def _select_or_create_group(page: Page, group_name: str):
             page.keyboard.press("Escape")
         except Exception:
             pass
+
+
+def _disable_multi_ad_placements(page: Page):
+    """Disable the Multi-Ad Placements toggle if it's ON.
+
+    DOM inspection (2026-04-14) confirmed:
+    - Checkbox: input#allow_multi_placement.onoffswitch-checkbox
+    - Default: checked=true, disabled=true
+    - Hidden (display:none) — wrapped in .onoffswitch div
+    - Click the .onoffswitch-label sibling to toggle
+    - Must remove disabled attr first since TJ disables it on fresh drafts
+    """
+    toggled = page.evaluate('''() => {
+        const cb = document.getElementById("allow_multi_placement");
+        if (!cb) return "not_found";
+        if (!cb.checked) return "already_off";
+
+        // Remove disabled so we can toggle it
+        cb.removeAttribute("disabled");
+
+        // Click the onoffswitch-label (visible toggle UI)
+        const container = cb.closest(".onoffswitch");
+        if (container) {
+            const label = container.querySelector(".onoffswitch-label");
+            if (label) {
+                label.click();
+                return cb.checked ? "click_failed" : "unchecked_via_label";
+            }
+        }
+
+        // Fallback: direct checkbox manipulation
+        cb.checked = false;
+        cb.dispatchEvent(new Event("change", {bubbles: true}));
+        cb.dispatchEvent(new Event("click", {bubbles: true}));
+        return "unchecked_direct";
+    }''')
+    if "unchecked" in toggled:
+        logger.info(f"    Multi-Ad Placements: OFF ({toggled})")
+    elif toggled == "already_off":
+        logger.info("    Multi-Ad Placements: already OFF")
+    elif toggled == "click_failed":
+        logger.warning("    Multi-Ad Placements: toggle click did not uncheck — may need manual fix")
+    elif toggled == "not_found":
+        logger.debug("    Multi-Ad Placements toggle not found (may not exist on this page)")
+    time.sleep(0.3)
 
 
 def _set_labels(page: Page, labels: list):

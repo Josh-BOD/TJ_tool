@@ -153,13 +153,14 @@ def click_save_and_continue(page: Page):
         'button:has-text("Save & Continue")',
     ]
 
-    for attempt in range(3):
+    for attempt in range(6):
+        dismiss_modals(page)
         for sel in selectors:
             try:
                 locator = page.locator(sel).first
                 if locator.count() > 0 and locator.is_visible(timeout=2000):
                     logger.info(f"  [Save] Clicking: {sel} (attempt {attempt+1})")
-                    locator.click(timeout=60000)
+                    locator.click(timeout=5000)
                     time.sleep(2)
                     dismiss_modals(page)
                     if page.url != url_before:
@@ -169,9 +170,10 @@ def click_save_and_continue(page: Page):
                     break  # found a button but page didn't navigate — retry
             except Exception as e:
                 logger.debug(f"  Save button {sel}: {e}")
+                dismiss_modals(page)
                 continue
         else:
-            if attempt < 2:
+            if attempt < 5:
                 dismiss_modals(page)
                 time.sleep(1)
                 continue
