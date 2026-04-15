@@ -587,11 +587,19 @@ class V4CampaignCreator:
                           wait_until="domcontentloaded", timeout=15000)
             _t.sleep(3)
             url = self.page.url
-            # If redirected to a live campaign page (not /campaigns list)
             match = re.search(r'/campaign/(\d{10,})(?:/|$|\?)', url)
             if match and "/drafts/" not in url:
-                logger.info(f"    Live ID via campaign redirect: {match.group(1)}")
-                return match.group(1)
+                live_id = match.group(1)
+                # Verify it's OUR campaign by checking the name on the page
+                page_name = self.page.evaluate('() => document.querySelector("input[name=\\"name\\"]")?.value || ""')
+                if page_name and campaign_name in page_name:
+                    logger.info(f"    Live ID confirmed: {live_id}")
+                    return live_id
+                elif page_name:
+                    logger.info(f"    Redirect returned wrong campaign: '{page_name[:30]}' != '{campaign_name[:30]}'")
+                else:
+                    logger.info(f"    Live ID via redirect (unverified): {live_id}")
+                    return live_id
         except Exception:
             pass
 
@@ -603,8 +611,28 @@ class V4CampaignCreator:
             url = self.page.url
             match = re.search(r'/campaign/(?:overview/)?(\d{10,})', url)
             if match:
-                logger.info(f"    Live ID via overview redirect: {match.group(1)}")
-                return match.group(1)
+                live_id = match.group(1)
+                # Verify name from overview page
+                page_name = self.page.evaluate('''() => {
+                    const rows = document.querySelectorAll('.form-row');
+                    for (const row of rows) {
+                        const label = row.querySelector('label');
+                        if (label && label.textContent.trim().toLowerCase().includes('name')) {
+                            const val = row.querySelector('.form-value, span:not(label span)');
+                            if (val) return val.textContent.trim();
+                        }
+                    }
+                    return "";
+                }''')
+                if page_name and campaign_name in page_name:
+                    logger.info(f"    Live ID confirmed via overview: {live_id}")
+                elif page_name:
+                    logger.info(f"    Overview wrong campaign: '{page_name[:30]}' != '{campaign_name[:30]}'")
+                    live_id = None  # Don't use wrong ID
+                else:
+                    logger.info(f"    Live ID via overview (unverified): {live_id}")
+                if live_id:
+                    return live_id
         except Exception:
             pass
 
@@ -748,3 +776,54 @@ def _handle_keywords(page: Page, config: V4CampaignConfig):
 
     except Exception as e:
         logger.warning(f"    Could not configure keywords: {e}")
+
+    # Handle keyword excludes (V5 field)
+    keywords_exclude = getattr(config, 'keywords_exclude', [])
+    if keywords_exclude:
+        _handle_keywords_exclude(page, keywords_exclude)
+
+
+def _handle_keywords_exclude(page: Page, keywords_exclude: list):
+    """Add exclude keywords via the bulk add exclude UI."""
+    import time
+
+    try:
+        # Remove existing exclude keywords
+        remove_all = page.locator('a.removeAllKeywords[data-selection-type="exclude"]')
+        if remove_all.count() > 0 and remove_all.first.is_visible(timeout=2000):
+            remove_all.first.click()
+            time.sleep(0.5)
+
+        # Build bulk text (all exact for excludes)
+        bulk_text = "\n".join(keywords_exclude)
+
+        # Open bulk add for exclude
+        bulk_btn = page.query_selector('button.bulkAddButton[data-type="exclude"]')
+        if bulk_btn:
+            bulk_btn.click()
+            time.sleep(0.5)
+        else:
+            # Try the generic bulk add then switch to exclude tab
+            page.click('button:has-text("Bulk add")', timeout=3000)
+            time.sleep(0.5)
+
+        textarea = page.query_selector('textarea.bulkTextField[data-type="exclude"]')
+        if textarea:
+            textarea.fill(bulk_text)
+            time.sleep(0.3)
+        else:
+            # Fallback: try any exclude textarea
+            page.fill('textarea.bulkTextField', bulk_text)
+            time.sleep(0.3)
+
+        save_btn = page.query_selector('button#saveBulkKeywordList[data-type="exclude"]')
+        if save_btn:
+            save_btn.click()
+            time.sleep(0.5)
+        else:
+            page.click('button#saveBulkKeywordList', timeout=3000)
+            time.sleep(0.5)
+
+        logger.info(f"    Excluded {len(keywords_exclude)} keywords")
+    except Exception as e:
+        logger.warning(f"    Could not configure keyword excludes: {e}")

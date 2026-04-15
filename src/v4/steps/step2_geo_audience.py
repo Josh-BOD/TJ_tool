@@ -119,9 +119,14 @@ def configure_step2(page: Page, config: V4CampaignConfig, variant: str):
     if config.has_vr_targeting:
         _configure_vr(page, config)
 
-    # Segment targeting
+    # Segment targeting (include)
     if config.has_segment_targeting:
         _configure_segments(page, config)
+
+    # Segment targeting (exclude) — V5 field
+    segment_exclude = getattr(config, 'segment_targeting_exclude', '')
+    if segment_exclude:
+        _configure_segments_exclude(page, segment_exclude)
 
 
 # ─── Geo ──────────────────────────────────────────────────────────
@@ -949,3 +954,78 @@ def _configure_segments(page: Page, config: V4CampaignConfig):
         logger.info(f"    Segment targeting: {len(segments)} segment(s) configured")
     except Exception as e:
         logger.warning(f"    Could not set segment targeting: {e}")
+
+
+def _configure_segments_exclude(page: Page, segment_exclude_str: str):
+    """Add exclude segments via the TJ segment modal (excluded type)."""
+    segments = [s.strip() for s in segment_exclude_str.split(";") if s.strip()]
+    if not segments:
+        return
+
+    try:
+        # Click the "Select Segment" link for excluded type
+        clicked = page.evaluate('''() => {
+            const section = document.querySelector("#campaign_segmentTargeting");
+            if (section) section.scrollIntoView({behavior: "instant", block: "center"});
+            const link = document.querySelector('a.openSegmentTargetingModal[data-targeting-segment-type="excluded"]');
+            if (link) { link.click(); return true; }
+            return false;
+        }''')
+        if not clicked:
+            logger.warning("    Exclude segment link not found")
+            return
+        time.sleep(2)
+
+        # Wait for modal to load
+        for _ in range(15):
+            loading = page.evaluate('''() => {
+                const modals = document.querySelectorAll('[class*="modal"]');
+                for (const m of modals) {
+                    if (m.offsetHeight > 0 && m.innerText.includes("Loading")) return true;
+                }
+                return false;
+            }''')
+            if not loading:
+                break
+            time.sleep(1)
+        time.sleep(1)
+
+        search_input = page.locator('input[placeholder*="VOD"], input[placeholder*="Try"]').first
+
+        for segment_name in segments:
+            search_input.fill("")
+            search_input.fill(segment_name)
+            time.sleep(1.5)
+
+            checked = page.evaluate('''(name) => {
+                const items = document.querySelectorAll('label, li, [class*="segment"]');
+                for (const item of items) {
+                    if (item.textContent.includes(name)) {
+                        const cb = item.querySelector('input[type="checkbox"]');
+                        if (cb && !cb.checked) {
+                            cb.click();
+                            cb.dispatchEvent(new Event("change", {bubbles: true}));
+                            return "checked";
+                        }
+                        if (cb && cb.checked) return "already checked";
+                    }
+                }
+                return "not found";
+            }''', segment_name)
+            logger.info(f"    Exclude segment '{segment_name}': {checked}")
+
+        # Click "Exclude Segment" button
+        page.evaluate('''() => {
+            const buttons = document.querySelectorAll('button');
+            for (const b of buttons) {
+                if (b.textContent.includes("Exclude Segment") && b.offsetHeight > 0) {
+                    b.click();
+                    return true;
+                }
+            }
+            return false;
+        }''')
+        time.sleep(1)
+        logger.info(f"    Segment exclude: {len(segments)} segment(s) excluded")
+    except Exception as e:
+        logger.warning(f"    Could not set segment exclude: {e}")

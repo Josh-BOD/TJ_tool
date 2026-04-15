@@ -369,8 +369,10 @@ UPDATE_TESTS = [
     ("update_labels", {"labels": "UpdateTest,V5"}, "labels", "UpdateTest,V5"),
     # Page 2 fields
     ("update_geo", {"geo": "US,CA,GB"}, "geo", "US,CA,GB"),
-    # ("update_keywords", {"keywords": "test_kw1;test_kw2"}, "keywords", "test_kw1;test_kw2"),  # writer.py keyword toggle issue — fix separately
+    ("update_keywords", {"keywords": "test_kw1;test_kw2"}, "keywords", "test_kw1;test_kw2"),
     ("update_browser_language", {"browser_language": "DE"}, "browser_language", "DE"),
+    ("update_os_include", {"os_include": "iOS", "ios_version_op": "newer_than", "ios_version": "16.0"}, "os_include", "iOS"),
+    ("update_retargeting", {"retargeting_type": "click", "retargeting_mode": "include"}, "retargeting_type", "click"),
     # Page 3 fields
     ("update_smart_bidder", {"smart_bidder": "smart_cpm"}, "smart_bidder", "smart_cpm"),
     # Page 4 fields

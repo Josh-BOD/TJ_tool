@@ -1198,10 +1198,30 @@ def _update_keywords(page: Page, kw_value):
 
     # Ensure keyword toggle is ON (if there are keywords to add)
     if kw_raw:
-        # Check if keyword section exists and toggle is available
+        # Enable keyword targeting toggle if not already on
+        toggle_result = page.evaluate('''() => {
+            const cb = document.getElementById("keyword_targeting");
+            if (cb && !cb.checked) {
+                cb.click();
+                cb.dispatchEvent(new Event("change", {bubbles: true}));
+                return "enabled";
+            }
+            if (cb && cb.checked) return "already_on";
+            // Try onoffswitch label
+            const label = document.querySelector('.onoffswitch-label[data-input="#keyword_targeting"]');
+            if (label) { label.click(); return "enabled_via_label"; }
+            return "not_found";
+        }''')
+        logger.info(f"  Keyword toggle: {toggle_result}")
+        time.sleep(1)
+
+        # Wait for keyword select2 to appear
         has_kw_section = page.evaluate('''() => !!document.querySelector('#keyword_select')''')
         if not has_kw_section:
-            logger.warning("  Keyword section not found — format may not support keywords")
+            time.sleep(2)
+            has_kw_section = page.evaluate('''() => !!document.querySelector('#keyword_select')''')
+        if not has_kw_section:
+            logger.warning("  Keyword section not found after enabling toggle — format may not support keywords")
             return
 
     # Remove existing keywords first
@@ -1215,7 +1235,51 @@ def _update_keywords(page: Page, kw_value):
         logger.info("  Keywords: cleared all")
         return
 
-    # Add keywords one by one via select2 UI
+    # Use bulk add (same approach as creator — more reliable than one-by-one select2)
+    try:
+        # Build bulk text: [keyword] for broad, keyword for exact
+        bulk_lines = []
+        for kw in kw_raw:
+            bulk_lines.append(kw)  # Already formatted with [brackets] for broad
+
+        bulk_text = "\n".join(bulk_lines)
+
+        # Click Bulk add button
+        page.evaluate('''() => {
+            const btns = document.querySelectorAll("button");
+            for (const b of btns) {
+                if (b.textContent.trim().includes("Bulk add") && b.offsetHeight > 0) {
+                    b.click(); return true;
+                }
+            }
+            const bulkBtn = document.querySelector("button.bulkAddButton");
+            if (bulkBtn) { bulkBtn.click(); return true; }
+            return false;
+        }''')
+        time.sleep(1)
+
+        # Fill the include textarea
+        textarea = page.query_selector('textarea.bulkTextField[data-type="include"]')
+        if not textarea:
+            textarea = page.query_selector('textarea.bulkTextField')
+        if textarea:
+            textarea.fill(bulk_text)
+            time.sleep(0.3)
+
+        # Click save bulk keywords
+        save_btn = page.query_selector('button#saveBulkKeywordList[data-type="include"]')
+        if not save_btn:
+            save_btn = page.query_selector('button#saveBulkKeywordList')
+        if save_btn:
+            save_btn.click()
+            time.sleep(1)
+
+        logger.info(f"  Keywords: bulk added {len(kw_raw)} keywords")
+        return
+    except Exception as e:
+        logger.warning(f"  Bulk keyword add failed: {e} — trying one-by-one")
+
+    # Fallback: Add keywords one by one via select2 UI
     added = 0
     for kw in kw_raw:
         is_broad = kw.startswith("[") and kw.endswith("]")
@@ -1531,11 +1595,25 @@ def _apply_page4_fields(page: Page, fields: dict):
 
     if "frequency_cap" in fields or "frequency_cap_every" in fields:
         _set_section_toggle(page, "frequency_cap", "#frequency_cap", True)
+        time.sleep(1)  # Wait for toggle to reveal fields
 
         if "frequency_cap" in fields:
-            wait_and_fill(page, "#frequency_cap_times", str(fields["frequency_cap"]))
+            try:
+                wait_and_fill(page, "#frequency_cap_times", str(fields["frequency_cap"]))
+            except Exception:
+                # Fallback: JS fill
+                page.evaluate(f'''() => {{
+                    const el = document.getElementById("frequency_cap_times");
+                    if (el) {{ el.value = "{fields["frequency_cap"]}"; el.dispatchEvent(new Event("change", {{bubbles:true}})); }}
+                }}''')
         if "frequency_cap_every" in fields:
-            wait_and_fill(page, "#frequency_cap_every", str(fields["frequency_cap_every"]))
+            try:
+                wait_and_fill(page, "#frequency_cap_every", str(fields["frequency_cap_every"]))
+            except Exception:
+                page.evaluate(f'''() => {{
+                    const el = document.getElementById("frequency_cap_every");
+                    if (el) {{ el.value = "{fields["frequency_cap_every"]}"; el.dispatchEvent(new Event("change", {{bubbles:true}})); }}
+                }}''')
 
     if "start_date" in fields or "end_date" in fields:
         # Enable duration toggle via visible label
@@ -1659,18 +1737,14 @@ def _save_audience_page(page: Page):
     url_before = page.url
     logger.info(f"  Saving audience page from {url_before}")
 
-    # Click Save & Continue (or Save Changes for drafts) via JS
+    # Use confirmAudience.saveAndContinue (full form submit — persists all toggle
+    # sections including OS, retargeting, browser targeting). Falls back to saveChanges.
     page.evaluate('''() => {
         const btn = document.querySelector("button.confirmAudience.saveAndContinue")
                  || document.querySelector("button.saveAndContinue");
-        if (btn) { btn.click(); return; }
-        // Draft fallback: "Save Changes" button
-        const buttons = document.querySelectorAll("button");
-        for (const b of buttons) {
-            if (b.textContent.trim() === "Save Changes" && b.offsetHeight > 0) {
-                b.click(); return;
-            }
-        }
+        if (btn && btn.offsetParent !== null) { btn.scrollIntoView({block: "center"}); btn.click(); return; }
+        const saveChanges = document.getElementById("saveChanges");
+        if (saveChanges && saveChanges.offsetParent !== null) { saveChanges.click(); return; }
     }''')
 
     # Poll for modal or URL change for up to 30 seconds
