@@ -1594,7 +1594,7 @@ def _apply_page4_fields(page: Page, fields: dict):
             logger.info(f"  Set daily_budget = {budget_val}")
 
     if "frequency_cap" in fields or "frequency_cap_every" in fields:
-        _set_section_toggle(page, "frequency_cap", "#frequency_cap", True)
+        _set_section_toggle(page, "campaign_frequency_capping", "#frequency_capping", True)
         time.sleep(1)  # Wait for toggle to reveal fields
 
         if "frequency_cap" in fields:
