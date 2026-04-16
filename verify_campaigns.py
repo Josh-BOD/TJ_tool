@@ -248,6 +248,21 @@ def _extract_page2_fields(page) -> dict:
             if kw_parts:
                 d["match_type"] = "broad" if len(broad_kws) > len(exact_kws) else "exact"
 
+            # Keyword excludes
+            exc = kw_data.get("exclude", {})
+            exc_exact = exc.get("exact", [])
+            exc_broad = exc.get("broad", [])
+            exc_parts = []
+            for kw in exc_broad:
+                text = _kw_text(kw)
+                if text:
+                    exc_parts.append(f"[{text}]")
+            for kw in exc_exact:
+                text = _kw_text(kw)
+                if text:
+                    exc_parts.append(text)
+            d["keywords_exclude"] = ";".join(exc_parts)
+
     # Segment targeting
     d["segment_targeting"] = ""
     if _is_checkbox_on(page, "segment_targeting"):
@@ -448,6 +463,7 @@ FIELD_MAP = {
     "vr_mode":          ("vr_mode",          2, _norm_str),
     "segment_targeting": ("segment_targeting", 2, _norm_str),
     "keywords":         ("keywords",         2, _norm_list),
+    "keywords_exclude":  ("keywords_exclude", 2, _norm_list),
     "match_type":       ("match_type",       2, _norm_match_type),
 
     # ── Step 3 (Tracking & Sources) ──────────────────────────────

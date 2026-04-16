@@ -779,50 +779,69 @@ def _handle_keywords(page: Page, config: V4CampaignConfig):
 
     # Handle keyword excludes (V5 field)
     keywords_exclude = getattr(config, 'keywords_exclude', [])
+    logger.info(f"    Keyword exclude check: {keywords_exclude}")
     if keywords_exclude:
         _handle_keywords_exclude(page, keywords_exclude)
 
 
 def _handle_keywords_exclude(page: Page, keywords_exclude: list):
-    """Add exclude keywords via the bulk add exclude UI."""
+    """Add exclude keywords via the bulk add exclude UI.
+
+    TJ has separate include/exclude keyword sections. The exclude section
+    uses the same bulk-add pattern but with data-type='exclude' attributes.
+    If the separate exclude UI isn't available, fall back to the select2 approach.
+    """
     import time
 
     try:
+        # Scroll to keyword exclude section
+        page.evaluate('''() => {
+            const section = document.querySelector('#campaign_keywordTargeting, #keywordExclude');
+            if (section) section.scrollIntoView({block: "center"});
+        }''')
+        time.sleep(0.5)
+
         # Remove existing exclude keywords
-        remove_all = page.locator('a.removeAllKeywords[data-selection-type="exclude"]')
-        if remove_all.count() > 0 and remove_all.first.is_visible(timeout=2000):
-            remove_all.first.click()
-            time.sleep(0.5)
+        page.evaluate('''() => {
+            const removeAll = document.querySelector('a.removeAllKeywords[data-selection-type="exclude"]');
+            if (removeAll) removeAll.click();
+        }''')
+        time.sleep(0.5)
 
         # Build bulk text (all exact for excludes)
         bulk_text = "\n".join(keywords_exclude)
 
-        # Open bulk add for exclude
-        bulk_btn = page.query_selector('button.bulkAddButton[data-type="exclude"]')
-        if bulk_btn:
-            bulk_btn.click()
-            time.sleep(0.5)
-        else:
-            # Try the generic bulk add then switch to exclude tab
-            page.click('button:has-text("Bulk add")', timeout=3000)
-            time.sleep(0.5)
+        # Add exclude keywords one-by-one via select2 #keyword_exclude
+        added = 0
+        for kw in keywords_exclude:
+            try:
+                # Open the exclude keyword select2 (ID: keyword_exclude)
+                page.evaluate('''() => {
+                    const sel = document.querySelector("#keyword_exclude");
+                    if (sel) { $(sel).select2("open"); return; }
+                    const s2 = document.querySelector('#select2-keyword_exclude-container');
+                    if (s2) s2.click();
+                }''')
+                time.sleep(0.5)
 
-        textarea = page.query_selector('textarea.bulkTextField[data-type="exclude"]')
-        if textarea:
-            textarea.fill(bulk_text)
-            time.sleep(0.3)
-        else:
-            # Fallback: try any exclude textarea
-            page.fill('textarea.bulkTextField', bulk_text)
-            time.sleep(0.3)
+                # Type keyword in search
+                search = page.locator('.select2-container--open .select2-search__field')
+                search.fill(kw)
+                time.sleep(1.5)
 
-        save_btn = page.query_selector('button#saveBulkKeywordList[data-type="exclude"]')
-        if save_btn:
-            save_btn.click()
-            time.sleep(0.5)
-        else:
-            page.click('button#saveBulkKeywordList', timeout=3000)
-            time.sleep(0.5)
+                # Click first matching result
+                page.locator('li.select2-results__option').first.click(timeout=5000)
+                time.sleep(0.5)
+                added += 1
+            except Exception as e:
+                logger.warning(f"    Could not add exclude keyword '{kw}': {e}")
+                try:
+                    page.keyboard.press("Escape")
+                except Exception:
+                    pass
+                time.sleep(0.3)
+
+        logger.info(f"    Excluded {added}/{len(keywords_exclude)} keywords via select2")
 
         logger.info(f"    Excluded {len(keywords_exclude)} keywords")
     except Exception as e:

@@ -198,6 +198,8 @@ def generate_clone_csv(out_path: Path, quick=False):
          "content_category": "gay", "keywords": "yaoi;bara",
          "keyword_name": "KEY-Yaoi", "labels": "V5Test;Yaoi",
          "daily_budget": "100.00", "frequency_cap": "5"},
+        # NOTE: keywords_exclude doesn't persist via clone edit save (same TJ limitation as OS/retargeting)
+        # Keyword excludes work during initial 5-step create flow only
         # Trans iOS + gender override
         {"template_campaign_id": "1013321501", "variants": "ios",
          "content_category": "trans", "gender": "female",
@@ -371,12 +373,10 @@ UPDATE_TESTS = [
     ("update_geo", {"geo": "US,CA,GB"}, "geo", "US,CA,GB"),
     ("update_keywords", {"keywords": "test_kw1;test_kw2"}, "keywords", "test_kw1;test_kw2"),
     ("update_browser_language", {"browser_language": "DE"}, "browser_language", "DE"),
-    # KNOWN LIMITATION: OS + retargeting updates don't persist via writer.py page 2 save
-    # on live campaigns. These work during initial creation (clone/create flow) but not
-    # via post-creation update. TJ's Save & Continue doesn't persist toggle section changes.
-    # TODO: investigate alternative save approach for page 2 toggle updates
-    # ("update_os_include", {"os_include": "iOS", "ios_version_op": "newer_than", "ios_version": "16.0"}, "os_include", "iOS"),
-    # ("update_retargeting", {"retargeting_type": "click", "retargeting_mode": "include"}, "retargeting_type", "click"),
+    # TJ CLONE-EDIT LIMITATION: toggle section updates don't persist on live campaigns
+    # These work during initial 5-step create but not post-creation edit via writer.py
+    # ("update_os_include", ...),  # os_include doesn't persist
+    # ("update_retargeting", ...),  # retargeting doesn't persist
     # Page 3 fields
     ("update_smart_bidder", {"smart_bidder": "smart_cpm"}, "smart_bidder", "smart_cpm"),
     # Page 4 fields

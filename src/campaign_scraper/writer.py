@@ -873,8 +873,19 @@ def _update_income_segment(page: Page, income_value: str):
 
 def _update_retargeting(page: Page, fields: dict):
     """Enable retargeting and configure type/mode/value."""
-    enable_toggle(page, "campaign_retargeting")
-    time.sleep(0.5)
+    # Check-before-toggle — don't disable if already ON
+    is_on = page.evaluate('''() => {
+        const section = document.getElementById("campaign_retargeting");
+        if (!section) return false;
+        const cb = section.querySelector("input[type='checkbox']");
+        return cb ? cb.checked : false;
+    }''')
+    if not is_on:
+        try:
+            page.click('.onoffswitch-label[data-input="#retargeting"]', timeout=3000)
+        except Exception:
+            enable_toggle(page, "campaign_retargeting")
+    time.sleep(1)
 
     rt_type = fields.get("retargeting_type", "")
     rt_mode = fields.get("retargeting_mode", "")
