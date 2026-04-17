@@ -37,6 +37,7 @@ PAGE1_FIELDS = {
     "content_rating", "group", "labels", "exchange_id",
     "device", "ad_format_type", "format_type", "ad_type",
     "ad_dimensions", "content_category", "gender",
+    "rotate_ads", "allow_multi_placement",
 }
 
 PAGE2_FIELDS = {
@@ -44,12 +45,14 @@ PAGE2_FIELDS = {
     "android_version_op", "android_version", "browsers_include", "browser_language",
     "postal_codes", "isp_country", "isp_name", "ip_range_start", "ip_range_end",
     "income_segment", "retargeting_type", "retargeting_mode", "retargeting_value",
-    "vr_mode", "segment_targeting", "keywords", "match_type",
+    "vr_mode", "segment_targeting", "segment_targeting_exclude",
+    "keywords", "keywords_exclude", "match_type",
 }
 
 PAGE3_FIELDS = {
     "tracker_id", "target_cpa", "per_source_test_budget", "max_bid",
     "smart_bidder", "optimization_option",
+    "source_selection", "cpm_bid_mode", "cpm_bid_value",
 }
 
 PAGE4_FIELDS = {
@@ -244,6 +247,46 @@ def _apply_page1_fields(page: Page, fields: dict):
         else:
             logger.warning("  Labels input not found")
 
+    if "rotate_ads" in fields:
+        want_on = str(fields["rotate_ads"]).lower() in ("true", "1", "yes", "on")
+        result = page.evaluate(f'''() => {{
+            const cb = document.getElementById("rotate_ads_on_multi_placement");
+            if (!cb) return "not_found";
+            const isOn = cb.checked;
+            const wantOn = {str(want_on).lower()};
+            if (isOn === wantOn) return "already_" + (wantOn ? "on" : "off");
+            cb.removeAttribute("disabled");
+            const container = cb.closest(".onoffswitch");
+            if (container) {{
+                const label = container.querySelector(".onoffswitch-label");
+                if (label) {{ label.click(); return cb.checked === wantOn ? "toggled" : "click_failed"; }}
+            }}
+            cb.checked = wantOn;
+            cb.dispatchEvent(new Event("change", {{bubbles: true}}));
+            return "set_directly";
+        }}''')
+        logger.info(f"  Rotate ads: {want_on} ({result})")
+
+    if "allow_multi_placement" in fields:
+        want_on = str(fields["allow_multi_placement"]).lower() in ("true", "1", "yes", "on")
+        result = page.evaluate(f'''() => {{
+            const cb = document.getElementById("allow_multi_placement");
+            if (!cb) return "not_found";
+            const isOn = cb.checked;
+            const wantOn = {str(want_on).lower()};
+            if (isOn === wantOn) return "already_" + (wantOn ? "on" : "off");
+            cb.removeAttribute("disabled");
+            const container = cb.closest(".onoffswitch");
+            if (container) {{
+                const label = container.querySelector(".onoffswitch-label");
+                if (label) {{ label.click(); return cb.checked === wantOn ? "toggled" : "click_failed"; }}
+            }}
+            cb.checked = wantOn;
+            cb.dispatchEvent(new Event("change", {{bubbles: true}}));
+            return "set_directly";
+        }}''')
+        logger.info(f"  Allow multi-placement: {want_on} ({result})")
+
 
 # ═══════════════════════════════════════════════════════════════════
 # Toggle utilities for audience sections
@@ -361,6 +404,14 @@ def _apply_page2_fields(page: Page, fields: dict):
     # ── Keywords ─────────────────────────────────────────────────
     if "keywords" in fields:
         _update_keywords(page, fields["keywords"])
+
+    # ── Keywords exclude ────────────────────────────────────────
+    if "keywords_exclude" in fields:
+        _update_keywords_exclude(page, fields["keywords_exclude"])
+
+    # ── Segment targeting exclude ───────────────────────────────
+    if "segment_targeting_exclude" in fields:
+        _update_segment_targeting_exclude(page, fields["segment_targeting_exclude"])
 
     # ── Match type ───────────────────────────────────────────────
     if "match_type" in fields:
@@ -1351,6 +1402,89 @@ def _update_keywords(page: Page, kw_value):
     logger.info(f"  Keywords: {added}/{len(kw_raw)} added via UI")
 
 
+# ── Keywords Exclude ─────────────────────────────────────────────
+
+def _update_keywords_exclude(page: Page, kw_value):
+    """Set excluded keywords via the #keyword_exclude select2."""
+    if isinstance(kw_value, list):
+        kws = kw_value
+    else:
+        sep = ";" if ";" in str(kw_value) else ","
+        kws = [k.strip() for k in str(kw_value).split(sep) if k.strip()]
+
+    if not kws:
+        logger.info("  Keywords exclude: empty, skipping")
+        return
+
+    # Enable keyword exclude section if not visible
+    section = page.locator("#keyword_exclude_section, #keywordExclude")
+    if section.count() > 0:
+        try:
+            toggle = page.locator('.onoffswitch-label[data-input="#keyword_exclude"]')
+            if toggle.count() > 0:
+                is_on = page.evaluate('''() => {
+                    const cb = document.getElementById("campaign_keyword_exclude") ||
+                               document.querySelector('input[name="keyword_exclude_toggle"]');
+                    return cb ? cb.checked : false;
+                }''')
+                if not is_on:
+                    toggle.click()
+                    time.sleep(1)
+        except Exception:
+            pass
+
+    # Clear existing excluded keywords
+    page.evaluate('''() => {
+        const container = document.querySelector("#keyword_exclude + .select2-container");
+        if (!container) return;
+        container.querySelectorAll(".select2-selection__choice__remove").forEach(x => x.click());
+    }''')
+    time.sleep(0.3)
+
+    # Add each keyword via select2
+    added = 0
+    for kw in kws:
+        try:
+            select2_choose(page, "#keyword_exclude", kw)
+            added += 1
+            time.sleep(0.3)
+        except Exception:
+            # Fallback: type into search and press Enter
+            try:
+                page.locator("#keyword_exclude + .select2-container .select2-search__field").fill(kw)
+                time.sleep(0.3)
+                page.keyboard.press("Enter")
+                added += 1
+            except Exception as e:
+                logger.warning(f"  Could not add keyword exclude '{kw}': {e}")
+        time.sleep(0.2)
+
+    logger.info(f"  Keywords exclude: {added}/{len(kws)} set")
+
+
+# ── Segment Targeting Exclude ────────────────────────────────────
+
+def _update_segment_targeting_exclude(page: Page, segment_value: str):
+    """Set excluded segments via the segment exclude modal."""
+    if isinstance(segment_value, list):
+        segments = segment_value
+    else:
+        sep = ";" if ";" in str(segment_value) else ","
+        segments = [s.strip() for s in str(segment_value).split(sep) if s.strip()]
+
+    if not segments:
+        logger.info("  Segment exclude: empty, skipping")
+        return
+
+    # Enable segment targeting section
+    _set_section_toggle(page, "campaign_segmentTargeting", "#segment_targeting", True)
+    time.sleep(1)
+
+    # Use the exclude modal flow
+    _apply_segments_modal(page, segments, "exclude", "Exclude Segments")
+    logger.info(f"  Segment targeting exclude: {len(segments)} segments")
+
+
 # ── Match Type ───────────────────────────────────────────────────
 
 def _update_match_type(page: Page, match_value: str):
@@ -1401,6 +1535,134 @@ def _apply_page3_fields(page: Page, fields: dict):
             wait_and_fill(page, "#maximum_bid", str(fields["max_bid"]))
         except Exception:
             logger.warning("  max_bid not visible (auto bidding may hide it) — skipping")
+
+    if "optimization_option" in fields:
+        _update_optimization_option(page, fields["optimization_option"])
+
+    # ── Source selection ─────────────────────────────────────────
+    if "source_selection" in fields:
+        _update_source_selection(page, fields["source_selection"])
+
+    # ── CPM bid mode + value ─────────────────────────────────────
+    if "cpm_bid_mode" in fields or "cpm_bid_value" in fields:
+        _update_cpm_bidding(page, fields)
+
+
+def _update_source_selection(page: Page, source_value: str):
+    """Update source/spot selection on page 3.
+
+    Accepts:
+      - "Pornhub" / "Pornhub,YouPorn" — select specific sources
+      - "all" — include all sources
+      - "manual" — switch to manual mode (doesn't add sources)
+    """
+    if not source_value:
+        return
+
+    sources = [s.strip() for s in str(source_value).split(",") if s.strip()]
+
+    if sources == ["all"]:
+        # Click "Include All Sources" button
+        try:
+            btn = page.locator('button:has-text("Include All"), a:has-text("Include All")')
+            if btn.count() > 0:
+                btn.first.click()
+                time.sleep(2)
+                logger.info("  Sources: Include All")
+                return
+        except Exception:
+            pass
+
+    # Switch to manual mode if not already
+    page.evaluate('''() => {
+        const manualRadio = document.querySelector('input[name="source_selection"][value="manual"]') ||
+                            document.querySelector('input[name="sources_mode"][value="manual"]');
+        if (manualRadio && !manualRadio.checked) {
+            manualRadio.click();
+            manualRadio.dispatchEvent(new Event("change", {bubbles: true}));
+        }
+    }''')
+    time.sleep(1)
+
+    # Search and add each source
+    for source_name in sources:
+        try:
+            search = page.locator('#source_search, input[placeholder*="Search sources"], input[placeholder*="search"]').first
+            if search.count() > 0:
+                search.fill(source_name)
+                time.sleep(1)
+                # Click matching source in results
+                result = page.locator(f'.source-result:has-text("{source_name}"), tr:has-text("{source_name}") input[type="checkbox"]').first
+                if result.count() > 0:
+                    result.click()
+                    time.sleep(0.5)
+                logger.info(f"  Source added: {source_name}")
+        except Exception as e:
+            logger.warning(f"  Could not add source '{source_name}': {e}")
+
+    logger.info(f"  Sources: {len(sources)} configured")
+
+
+def _update_cpm_bidding(page: Page, fields: dict):
+    """Set CPM bid mode (suggested/min/static) and value."""
+    mode = fields.get("cpm_bid_mode", "").lower()
+    value = fields.get("cpm_bid_value", "")
+
+    if mode == "suggested" or mode == "match_suggested":
+        # Click "Match Suggested CPM" button/link
+        try:
+            btn = page.locator('a:has-text("Match Suggested"), button:has-text("Match Suggested")')
+            if btn.count() > 0:
+                btn.first.click()
+                time.sleep(2)
+                logger.info("  CPM bid mode: Match Suggested")
+                return
+        except Exception:
+            pass
+
+    if mode == "min" or mode == "minimum":
+        # Use Bulk Edit → Adjust to floor
+        try:
+            page.evaluate('''() => {
+                const bulkEdit = document.querySelector('a:has-text("Bulk Edit"), button:has-text("Bulk Edit")');
+                if (bulkEdit) bulkEdit.click();
+            }''')
+            time.sleep(1)
+            # Select "Adjust" → -$25 to floor everything
+            adjust_input = page.locator('#bulk_adjust_amount, input[name="adjust_amount"]').first
+            if adjust_input.count() > 0:
+                adjust_input.fill("-25")
+                page.locator('button:has-text("Apply"), button:has-text("Update")').first.click()
+                time.sleep(2)
+                logger.info("  CPM bid mode: Minimum (via bulk -$25)")
+                return
+        except Exception as e:
+            logger.warning(f"  Min CPM via bulk edit failed: {e}")
+
+    if mode == "static" or mode == "fixed":
+        if not value:
+            logger.warning("  cpm_bid_mode=static but no cpm_bid_value — skipping")
+            return
+        # Use Bulk Edit → Set to fixed value
+        try:
+            page.evaluate('''() => {
+                const bulkEdit = document.querySelector('a:has-text("Bulk Edit"), button:has-text("Bulk Edit")');
+                if (bulkEdit) bulkEdit.click();
+            }''')
+            time.sleep(1)
+            # Set mode to "Set to" and fill value
+            set_input = page.locator('#bulk_set_amount, input[name="set_amount"]').first
+            if set_input.count() > 0:
+                set_input.fill(str(value))
+                page.locator('button:has-text("Apply"), button:has-text("Update")').first.click()
+                time.sleep(2)
+                logger.info(f"  CPM bid mode: Static ${value}")
+                return
+        except Exception as e:
+            logger.warning(f"  Static CPM set failed: {e}")
+
+    if value and not mode:
+        logger.info(f"  cpm_bid_value={value} without mode — skipping (need cpm_bid_mode)")
 
 
 def _update_tracker(page: Page, tracker_value: str):
