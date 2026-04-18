@@ -1405,7 +1405,11 @@ def _update_keywords(page: Page, kw_value):
 # ── Keywords Exclude ─────────────────────────────────────────────
 
 def _update_keywords_exclude(page: Page, kw_value):
-    """Set excluded keywords via the #keyword_exclude select2."""
+    """Set excluded keywords via the #keyword_exclude select2.
+
+    TJ DOM: select#keyword_exclude (select2-enhanced) inside #campaign_keywordTargeting.
+    Must enable keyword section first, then use select2_choose on the select element.
+    """
     if isinstance(kw_value, list):
         kws = kw_value
     else:
@@ -1416,45 +1420,32 @@ def _update_keywords_exclude(page: Page, kw_value):
         logger.info("  Keywords exclude: empty, skipping")
         return
 
-    # Enable keyword exclude section if not visible
-    section = page.locator("#keyword_exclude_section, #keywordExclude")
-    if section.count() > 0:
-        try:
-            toggle = page.locator('.onoffswitch-label[data-input="#keyword_exclude"]')
-            if toggle.count() > 0:
-                is_on = page.evaluate('''() => {
-                    const cb = document.getElementById("campaign_keyword_exclude") ||
-                               document.querySelector('input[name="keyword_exclude_toggle"]');
-                    return cb ? cb.checked : false;
-                }''')
-                if not is_on:
-                    toggle.click()
-                    time.sleep(1)
-        except Exception:
-            pass
+    # Enable keyword targeting section if not already on
+    _set_section_toggle(page, "campaign_keywordTargeting", "#keyword_targeting", True)
+    time.sleep(1)
 
-    # Clear existing excluded keywords
+    # Clear existing excluded keywords from the keyword_excluded container
     page.evaluate('''() => {
-        const container = document.querySelector("#keyword_exclude + .select2-container");
+        const container = document.getElementById("keyword_excluded");
         if (!container) return;
-        container.querySelectorAll(".select2-selection__choice__remove").forEach(x => x.click());
+        container.querySelectorAll(".removeKeyword, .remove-keyword, .close").forEach(x => x.click());
     }''')
     time.sleep(0.3)
 
-    # Add each keyword via select2
+    # Add each keyword via the select2 dropdown on #keyword_exclude
     added = 0
     for kw in kws:
         try:
-            select2_choose(page, "#keyword_exclude", kw)
+            # Click the select2 container sibling of #keyword_exclude
+            select2_choose(page, "select#keyword_exclude + .select2-container", kw)
             added += 1
-            time.sleep(0.3)
+            time.sleep(0.5)
         except Exception:
-            # Fallback: type into search and press Enter
             try:
-                page.locator("#keyword_exclude + .select2-container .select2-search__field").fill(kw)
-                time.sleep(0.3)
-                page.keyboard.press("Enter")
+                # Fallback: click the select element directly (some select2 versions)
+                select2_choose(page, "#keyword_exclude", kw)
                 added += 1
+                time.sleep(0.5)
             except Exception as e:
                 logger.warning(f"  Could not add keyword exclude '{kw}': {e}")
         time.sleep(0.2)
